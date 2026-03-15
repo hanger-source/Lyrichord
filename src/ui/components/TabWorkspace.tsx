@@ -3,35 +3,44 @@
  *
  * 项目由 App 层管理，这里只管段落。
  */
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { SegmentNav } from './SegmentNav';
 import { TabEditor } from './TabEditor';
-import type { ChordSelectionPending, TabMeasure } from './TabEditor';
+import type { ChordSelectionPending, TabMeasure, TabEditorHandle } from './TabEditor';
+import { genSectionBody, genChordDefs, genTmdHeader } from './TabEditor';
 import {
   getSegmentsByProject, getOrphanSegments,
   saveSegment, deleteSegment,
   type SegmentRecord,
 } from '../../db/segment-repo';
 
+export interface TabWorkspaceHandle {
+  /** 外部触发保存（如 Ctrl+S） */
+  save: () => void;
+  /** 更新所有同名和弦的 positionIndex */
+  updateChordPosition: (chordName: string, positionIndex: number) => void;
+}
+
 interface TabWorkspaceProps {
   projectId: string | null;
   onTmdChange?: (tmd: string) => void;
+  onSegmentSaved?: () => void;
   onChordSelectionStart?: (sel: ChordSelectionPending) => void;
-  chordToApply?: string | null;
+  chordToApply?: { name: string; positionIndex: number } | null;
   onChordApplied?: () => void;
-  onChordClick?: (chordName: string) => void;
+  onChordClick?: (chordName: string, positionIndex?: number) => void;
   previewOpen?: boolean;
   onTogglePreview?: () => void;
 }
 
 const SEG_KEY = 'tab-workspace-segment';
 
-export function TabWorkspace({
+export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(function TabWorkspace({
   projectId,
-  onTmdChange, onChordSelectionStart, chordToApply,
+  onTmdChange, onSegmentSaved, onChordSelectionStart, chordToApply,
   onChordApplied, onChordClick, previewOpen, onTogglePreview,
-}: TabWorkspaceProps) {
+}, ref) {
   const [segments, setSegments] = useState<SegmentRecord[]>([]);
   const [activeSegId, setActiveSegId] = useState<string | null>(() => {
     try { return localStorage.getItem(SEG_KEY) || null; } catch { return null; }
@@ -40,6 +49,15 @@ export function TabWorkspace({
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const saveMsgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const tabEditorRef = useRef<TabEditorHandle>(null);
+
+  // 暴露 save 给外部（App 层 Ctrl+S）
+  useImperativeHandle(ref, () => ({
+    save() { tabEditorRef.current?.triggerSave(); },
+    updateChordPosition(chordName: string, positionIndex: number) {
+      tabEditorRef.current?.updateChordPosition(chordName, positionIndex);
+    },
+  }), []);
 
   const [editorTempo, setEditorTempo] = useState(72);
   const [editorBpm, setEditorBpm] = useState(8);
@@ -144,6 +162,42 @@ export function TabWorkspace({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const pendingSaveRef = useRef<{ measures: TabMeasure[]; tempo: number; bpm: number; tsLabel: string } | null>(null);
 
+  /**
+   * 把项目下所有 segment 拼成一份完整 TMD
+   * 共享 header（取第一个段落的 tempo/tsLabel），每个段落一个 [Section]
+   */
+  const buildFullTmd = useCallback((allSegments: SegmentRecord[]) => {
+    if (allSegments.length === 0) return;
+    const first = allSegments[0];
+    const allChordRegions: import('./TabEditor').ChordRegion[] = [];
+    const seenChords = new Set<string>();
+    const bodies: string[] = [];
+
+    for (const seg of allSegments) {
+      try {
+        const measures = JSON.parse(seg.measuresJson) as TabMeasure[];
+        const { body, usedChords } = genSectionBody(measures, seg.name);
+        if (body) {
+          bodies.push(body);
+          for (const c of usedChords) {
+            if (!seenChords.has(c.name)) {
+              seenChords.add(c.name);
+              allChordRegions.push(c);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(`段落 ${seg.name} 解析失败:`, e);
+      }
+    }
+
+    if (bodies.length === 0) return;
+    const chordDefs = genChordDefs(allChordRegions);
+    const header = genTmdHeader(first.tempo, first.tsLabel, chordDefs);
+    const fullTmd = `${header}\n\n${bodies.join('\n\n')}\n`;
+    onTmdChange?.(fullTmd);
+  }, [onTmdChange]);
+
   const doSave = useCallback(async (measures: TabMeasure[], tempo: number, bpm: number, tsLabel: string) => {
     const name = segmentName.trim() || '未命名段落';
     setSaving(true);
@@ -160,7 +214,9 @@ export function TabWorkspace({
       setActiveSegId(rec.id);
       setSegmentName(rec.name);
       showSaveMsg(`已保存「${rec.name}」`);
-      await refreshSegments();
+      const latest = await refreshSegments();
+      buildFullTmd(latest);
+      onSegmentSaved?.();
     } catch (e) {
       console.error('保存段落失败:', e);
       showSaveMsg('保存失败');
@@ -203,6 +259,7 @@ export function TabWorkspace({
       />
       <div className="tab-workspace-main">
         <TabEditor
+          ref={tabEditorRef}
           key={editorKey}
           initialMeasures={editorMeasures}
           initialTempo={editorTempo}
@@ -242,4 +299,4 @@ export function TabWorkspace({
       </AlertDialog.Root>
     </div>
   );
-}
+});

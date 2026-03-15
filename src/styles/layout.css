@@ -90,6 +90,14 @@
 .status-btn--error { color: var(--red); }
 .status-btn--warn { color: var(--orange); }
 .status-ok { color: var(--green); font-size: 12px; }
+.status-saved {
+  color: var(--green);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  animation: saveFlash 0.4s ease;
+}
 
 .diagnostics-panel {
   background: var(--bg-input); border-bottom: 1px solid var(--border);
@@ -102,15 +110,11 @@
 .diag-line { color: var(--cyan); font-size: 11px; flex-shrink: 0; }
 .diag-msg { color: var(--text-secondary); }
 
-/* TMD 编辑器 */
+/* TMD 编辑器 — CodeMirror 6 容器 */
 .tmd-editor {
-  flex: 1; background: var(--bg-input); color: var(--text-primary);
-  border: none; padding: 14px 16px;
-  font-family: var(--font-mono);
-  font-size: var(--font-base); line-height: 1.7;
-  resize: none; outline: none; tab-size: 2;
+  flex: 1; overflow: hidden;
+  background: var(--bg-input); color: var(--text-primary);
 }
-.tmd-editor::placeholder { color: var(--text-muted); }
 
 /* 播放控制 */
 .player-controls { display: flex; align-items: center; gap: 6px; }

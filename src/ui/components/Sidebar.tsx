@@ -30,18 +30,20 @@ interface SidebarProps {
   onDeleteScore: (id: string) => Promise<void>;
   onLoadVersion: (versionId: string) => Promise<void>;
   /** TAB 模式下，点击和弦卡片选择和弦 */
-  onChordPick?: (chordName: string) => void;
+  onChordPick?: (chordName: string, positionIndex: number) => void;
   /** 从 TAB 编辑器点击和弦 → 高亮对应卡片 */
-  highlightChord?: string | null;
+  highlightChord?: { name: string; positionIndex?: number } | null;
   onHighlightClear?: () => void;
+  /** 用户在 Sidebar 切换指法变体 → 同步更新 TAB 里同名和弦的 positionIndex */
+  onChordPositionChange?: (chordName: string, positionIndex: number) => void;
 }
 
-export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear, onChordPositionChange }: SidebarProps) {
   return (
     <Tooltip.Provider delayDuration={300}>
       <aside className="sidebar">
         <div style={{ display: tab === 'chords' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
-          <ChordPanel song={song} onChordPick={onChordPick} highlightChord={highlightChord} onHighlightClear={onHighlightClear} />
+          <ChordPanel song={song} onChordPick={onChordPick} highlightChord={highlightChord} onHighlightClear={onHighlightClear} onChordPositionChange={onChordPositionChange} />
         </div>
         <div style={{ display: tab === 'rhythms' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
           <ScrollArea.Root className="sidebar-scroll-root">
@@ -93,7 +95,7 @@ function extractRoot(id: string): string {
   return m ? m[1] : '?';
 }
 
-const ChordPanel = memo(function ChordPanel({ song, onChordPick, highlightChord, onHighlightClear }: { song: Song | null; onChordPick?: (name: string) => void; highlightChord?: string | null; onHighlightClear?: () => void }) {
+const ChordPanel = memo(function ChordPanel({ song, onChordPick, highlightChord, onHighlightClear, onChordPositionChange }: { song: Song | null; onChordPick?: (name: string, positionIndex: number) => void; highlightChord?: { name: string; positionIndex?: number } | null; onHighlightClear?: () => void; onChordPositionChange?: (name: string, positionIndex: number) => void }) {
   const [viewMode, setViewMode] = useState<'current' | 'library'>('library');
   const [searchQuery, setSearchQuery] = useState('');
   const [libraryChords, setLibraryChords] = useState<ChordDefinition[]>([]);
@@ -105,13 +107,16 @@ const ChordPanel = memo(function ChordPanel({ song, onChordPick, highlightChord,
 
   const currentChordIds = song ? collectChordIds(song) : [];
 
-  // 高亮和弦 → 自动切到全部库、跳转根音
+  // 高亮和弦 → 自动切到全部库（滚动由 ChordCardDef 自己处理）
+  const highlightScrollRef = useRef<string | null>(null);
   useEffect(() => {
     if (!highlightChord) return;
-    setViewMode('library');
     setFilterType('all');
     setSearchQuery('');
-    scrollToRoot(extractRoot(highlightChord));
+    if (viewMode !== 'library') {
+      highlightScrollRef.current = highlightChord.name;
+      setViewMode('library');
+    }
   }, [highlightChord]);
 
   useEffect(() => {
@@ -134,6 +139,8 @@ const ChordPanel = memo(function ChordPanel({ song, onChordPick, highlightChord,
         chords = getAllChordDefs();
       }
       setLibraryChords(chords);
+      // 清除待滚动标记（滚动由 ChordCardDef 的 highlight effect 处理）
+      highlightScrollRef.current = null;
     } catch (e) {
       console.error('加载和弦库失败:', e);
     } finally {
@@ -145,14 +152,17 @@ const ChordPanel = memo(function ChordPanel({ song, onChordPick, highlightChord,
 
   function scrollToRoot(root: string) {
     setActiveRoot(root);
+    // 双重 rAF 确保 DOM 布局完成（Sidebar 从 display:none 切换后需要额外一帧）
     requestAnimationFrame(() => {
-      const el = groupRefs.current.get(root);
-      const container = scrollRef.current;
-      if (el && container) {
-        const containerRect = container.getBoundingClientRect();
-        const elRect = el.getBoundingClientRect();
-        container.scrollTop += elRect.top - containerRect.top;
-      }
+      requestAnimationFrame(() => {
+        const el = groupRefs.current.get(root);
+        const container = scrollRef.current;
+        if (el && container) {
+          const containerRect = container.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          container.scrollTop += elRect.top - containerRect.top;
+        }
+      });
     });
   }
 
@@ -270,8 +280,10 @@ const ChordPanel = memo(function ChordPanel({ song, onChordPick, highlightChord,
                 <div className="chord-group-grid">
                   {chords.map(chord => (
                     <ChordCardDef key={chord.id} chord={chord} onPick={onChordPick}
-                      highlight={highlightChord === chord.id}
+                      highlight={highlightChord?.name === chord.id}
+                      highlightPositionIndex={highlightChord?.name === chord.id ? highlightChord.positionIndex : undefined}
                       onHighlightClear={onHighlightClear}
+                      onPositionChange={onChordPositionChange}
                     />
                   ))}
                 </div>
@@ -285,20 +297,36 @@ const ChordPanel = memo(function ChordPanel({ song, onChordPick, highlightChord,
   );
 });
 
-function ChordCardDef({ chord, onPick, highlight, onHighlightClear }: { chord: ChordDefinition; onPick?: (name: string) => void; highlight?: boolean; onHighlightClear?: () => void }) {
+function ChordCardDef({ chord, onPick, highlight, highlightPositionIndex, onHighlightClear, onPositionChange }: { chord: ChordDefinition; onPick?: (name: string, positionIndex: number) => void; highlight?: boolean; highlightPositionIndex?: number; onHighlightClear?: () => void; onPositionChange?: (name: string, positionIndex: number) => void }) {
   const [selectedPos, setSelectedPos] = useState(0);
   const variantCount = chord.positions?.length ?? 0;
   const cardRef = useRef<HTMLDivElement>(null);
 
-  // 高亮时滚动到可见区域
+  // 高亮时滚动到可见区域 + 同步指法变体
   useEffect(() => {
-    if (highlight && cardRef.current) {
-      cardRef.current.scrollIntoView({ behavior: 'instant' as ScrollBehavior, block: 'center' });
-      // 3秒后清除高亮
-      const t = setTimeout(() => onHighlightClear?.(), 3000);
-      return () => clearTimeout(t);
+    if (!highlight || !cardRef.current) return;
+
+    // 同步指法变体
+    if (highlightPositionIndex != null && highlightPositionIndex !== selectedPos) {
+      setSelectedPos(highlightPositionIndex);
     }
-  }, [highlight, onHighlightClear]);
+
+    const el = cardRef.current;
+    const container = el.closest('.chord-panel-scroll') as HTMLElement | null;
+
+    const doScroll = () => {
+      if (!container) return;
+      const elRect = el.getBoundingClientRect();
+      const cRect = container.getBoundingClientRect();
+      const offset = elRect.top - cRect.top + container.scrollTop - cRect.height / 2 + elRect.height / 2;
+      container.scrollTo({ top: Math.max(0, offset), behavior: 'instant' });
+    };
+
+    const scrollTimer = setTimeout(doScroll, 16);
+    // 3秒后清除高亮
+    const clearTimer = setTimeout(() => onHighlightClear?.(), 3000);
+    return () => { clearTimeout(scrollTimer); clearTimeout(clearTimer); };
+  }, [highlight, highlightPositionIndex, onHighlightClear]);
 
   const displayChord = variantCount > 1
     ? { ...chord, selectedPosition: selectedPos }
@@ -307,7 +335,9 @@ function ChordCardDef({ chord, onPick, highlight, onHighlightClear }: { chord: C
   function cycleVariant(e: React.MouseEvent) {
     e.stopPropagation();
     if (variantCount > 1) {
-      setSelectedPos(prev => (prev + 1) % variantCount);
+      const next = (selectedPos + 1) % variantCount;
+      setSelectedPos(next);
+      onPositionChange?.(chord.id, next);
     }
   }
 
@@ -317,7 +347,7 @@ function ChordCardDef({ chord, onPick, highlight, onHighlightClear }: { chord: C
         <div
           ref={cardRef}
           className={`chord-card ${onPick ? 'chord-card--pickable' : ''} ${highlight ? 'chord-card--highlight' : ''}`}
-          onClick={onPick ? () => onPick(chord.id) : undefined}
+          onClick={onPick ? () => onPick(chord.id, selectedPos) : undefined}
         >
           <div
             className="chord-svg"

@@ -127,12 +127,16 @@
 .tab-chord-region {
   position: absolute; top: 2px; bottom: 2px;
   background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px;
+  z-index: 2; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   z-index: 2; pointer-events: auto; cursor: pointer;
   transition: background 0.1s, border-color 0.1s;
 }
 .tab-chord-region:hover { background: var(--accent-dim); border-color: var(--accent-hover); }
 .tab-chord-region:active { background: var(--accent-glow); border-color: var(--accent-hover); }
+.tab-chord-region--active { background: var(--accent); border-color: var(--accent); }
+.tab-chord-region--active:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.tab-chord-region--active .tab-chord-region-name { color: #fff; }
 .tab-chord-region-name {
   font-size: 12px; font-weight: 700; color: var(--accent);
   user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px;

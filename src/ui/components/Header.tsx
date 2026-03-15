@@ -146,7 +146,6 @@ export function Header({
       </nav>
 
       <div className="header-right">
-        {saveMessage && <span className="save-toast">{saveMessage}</span>}
         <button
           className="btn-tiny"
           onClick={onToggleTheme}

@@ -162,6 +162,13 @@ function scanBodyLine(
     }
   }
 
+  // TAB 段落引用: @segment(Name)
+  const segRefMatch = line.match(/^@segment\(([^)]+)\)$/);
+  if (segRefMatch) {
+    tokens.push(tok('SEGMENT_REF', segRefMatch[1].trim(), lineNum, 0));
+    return;
+  }
+
   // 小节行: | C . D . |
   if (line.startsWith('|')) {
     scanMeasureLine(line, lineNum, tokens, errors);
