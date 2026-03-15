@@ -1,23 +1,30 @@
 /**
- * TMD 词法扫描器 v2
- * 
- * 将 TabMarkdown 原始文本逐行扫描，产出 Token 流。
- * 
- * v2 新增：
- * - BAR_LINE: | 小节线
- * - CHORD_BEATS: *N 和弦占拍数
- * - REST: _ 空拍/延续
- * 
- * TMD 文本结构:
- *   ---
- *   title: 你瞒我瞒
- *   tempo: 72
- *   @R1: pluck(p-3-(12)-3)
- *   define [D/#F]: {frets: "2 0 0 2 3 2"}
- *   ---
- *   
- *   [A1] @R1
- *   | (C)约会像是为 (D)分享到饱肚滋 | (G)味 _ _ _ |
+ * TMD 词法扫描器 v4
+ *
+ * v4 格式:
+ *   Header:  --- ... ---  (YAML-like meta + rhythm/chord defs)
+ *   小节行:  | C . D . |
+ *   歌词行:  w: [C]约会像是为分[D]享到饱肚
+ *   歌词2:   w2: [C]第二段歌词
+ *   TEX行:   tex: [C]3.5.8 0.3.8 [D]0.4.8 2.3.8
+ *   段落:    [Intro]  或  [A1] @R1
+ *   注释:    # ...
+ *
+ * 小节行语法:
+ *   |       → BAR_LINE
+ *   和弦名  → CHORD_BEAT (占1拍)
+ *   .       → NOTE_EVENT "." (延续拍)
+ *
+ * 歌词行语法:
+ *   [X] → CHORD_MARK
+ *   文字 → LYRICS
+ *   ~   → LYRICS "~" (延音)
+ *
+ * TEX行语法:
+ *   [X]           → CHORD_MARK
+ *   3.5.8 等beat  → NOTE_EVENT (原始 AlphaTex beat 文本)
+ *   (f.s f.s).dur → NOTE_EVENT (多音 beat)
+ *   r.dur         → NOTE_EVENT (休止)
  */
 import type { Token, TokenType } from '../types';
 
@@ -32,9 +39,10 @@ export interface ScanError {
   col: number;
 }
 
-/**
- * 扫描 TMD 文本，产出 Token 流
- */
+function tok(type: TokenType, value: string, line: number, col: number): Token {
+  return { type, value, line, col };
+}
+
 export function scan(source: string): ScanResult {
   const lines = source.split('\n');
   const tokens: Token[] = [];
@@ -48,13 +56,11 @@ export function scan(source: string): ScanResult {
     const lineNum = lineIdx + 1;
     const trimmed = line.trim();
 
-    // 空行 → NEWLINE
     if (trimmed === '') {
       tokens.push(tok('NEWLINE', '', lineNum, 0));
       continue;
     }
 
-    // 头部分隔符 ---
     if (trimmed === '---') {
       headerDelimiterCount++;
       if (headerDelimiterCount === 1) {
@@ -67,19 +73,16 @@ export function scan(source: string): ScanResult {
       continue;
     }
 
-    // 注释
     if (trimmed.startsWith('#') && !inHeader) {
       tokens.push(tok('COMMENT', trimmed.slice(1).trim(), lineNum, 0));
       continue;
     }
 
-    // 头部内容
     if (inHeader) {
       scanHeaderLine(trimmed, lineNum, tokens, errors);
       continue;
     }
 
-    // 正文内容
     scanBodyLine(trimmed, lineNum, tokens, errors);
   }
 
@@ -87,27 +90,34 @@ export function scan(source: string): ScanResult {
 }
 
 // ============================================================
-// 头部行扫描（不变）
+// Header 行扫描
 // ============================================================
 
+/**
+ * 扫描 header 内的一行
+ *
+ * 支持:
+ *   key: value          → META_KEY + META_VALUE
+ *   @R1: pluck(...)     → RHYTHM_DEF
+ *   define [X]: {...}   → CHORD_DEF
+ */
 function scanHeaderLine(
-  line: string,
-  lineNum: number,
-  tokens: Token[],
-  errors: ScanError[]
+  line: string, lineNum: number,
+  tokens: Token[], errors: ScanError[],
 ): void {
-  if (line.startsWith('#')) {
-    tokens.push(tok('COMMENT', line.slice(1).trim(), lineNum, 0));
-    return;
-  }
+  // 节奏型定义: @R1: ...
   if (line.startsWith('@')) {
     tokens.push(tok('RHYTHM_DEF', line, lineNum, 0));
     return;
   }
-  if (line.startsWith('define')) {
+
+  // 和弦定义: define [X]: ...
+  if (line.startsWith('define ')) {
     tokens.push(tok('CHORD_DEF', line, lineNum, 0));
     return;
   }
+
+  // 普通 meta: key: value
   const colonIdx = line.indexOf(':');
   if (colonIdx > 0) {
     const key = line.slice(0, colonIdx).trim();
@@ -116,161 +126,224 @@ function scanHeaderLine(
     tokens.push(tok('META_VALUE', value, lineNum, colonIdx + 1));
     return;
   }
-  errors.push({ message: `无法识别的头部行: "${line}"`, line: lineNum, col: 0 });
+
+  errors.push({ message: `无法解析 header 行: "${line}"`, line: lineNum, col: 0 });
 }
 
 // ============================================================
-// 正文行扫描 v2
+// Body 行扫描 (header 之后的所有内容)
 // ============================================================
-
-function scanBodyLine(
-  line: string,
-  lineNum: number,
-  tokens: Token[],
-  _errors: ScanError[]
-): void {
-  // 段落标记: [A1] @R1 或 [Chorus] @R2A
-  const sectionMatch = line.match(/^\[([^\]]+)\]\s*(.*)/);
-  if (sectionMatch) {
-    tokens.push(tok('SECTION', sectionMatch[1], lineNum, 0));
-    const rest = sectionMatch[2].trim();
-    if (rest.startsWith('@')) {
-      tokens.push(tok('RHYTHM_REF', rest, lineNum, sectionMatch[0].indexOf(rest)));
-    }
-    return;
-  }
-
-  // 包含 | 的行 → 小节驱动模式（v2）
-  if (line.includes('|')) {
-    scanMeasureLine(line, lineNum, tokens);
-    return;
-  }
-
-  // 兼容旧格式：无小节线的歌词+和弦行
-  scanLegacyLine(line, lineNum, tokens);
-}
 
 /**
- * v2: 扫描带小节线的行
- * 
- * 输入: "| (C)约会像是为 (D)分享到饱肚滋 | (G)味 _ _ _ |"
- * 输出: BAR_LINE, CHORD, LYRICS, CHORD, LYRICS, BAR_LINE, CHORD, LYRICS, REST, REST, REST, BAR_LINE
+ * 分发 body 行到具体的扫描函数
+ *
+ * 行类型判断:
+ *   [SectionName]  → 段落标记 (可能带 @R1 节奏引用)
+ *   | ...          → 小节行
+ *   w: ...         → 歌词行
+ *   w2: ...        → 第二段歌词行
+ *   tex: ...       → TEX 行 (精确 AlphaTex beat)
+ *   # ...          → 注释 (已在 scan() 中处理)
+ */
+function scanBodyLine(
+  line: string, lineNum: number,
+  tokens: Token[], errors: ScanError[],
+): void {
+  // 段落标记: [Intro]  或  [A1] @R1
+  if (line.startsWith('[')) {
+    const sectionMatch = line.match(/^\[([^\]]+)\]\s*(.*)/);
+    if (sectionMatch) {
+      tokens.push(tok('SECTION', sectionMatch[1], lineNum, 0));
+      const rest = sectionMatch[2].trim();
+      if (rest.startsWith('@')) {
+        tokens.push(tok('RHYTHM_REF', rest, lineNum, sectionMatch[1].length + 3));
+      }
+      return;
+    }
+  }
+
+  // 小节行: | C . D . |
+  if (line.startsWith('|')) {
+    scanMeasureLine(line, lineNum, tokens, errors);
+    return;
+  }
+
+  // 歌词行: w: ...
+  if (line.startsWith('w:')) {
+    scanLyricsLine(line.slice(2), lineNum, 2, tokens, errors);
+    return;
+  }
+
+  // 第二段歌词: w2: ...
+  if (line.startsWith('w2:')) {
+    tokens.push(tok('W2_START', 'w2', lineNum, 0));
+    scanLyricsLine(line.slice(3), lineNum, 3, tokens, errors);
+    return;
+  }
+
+  // TEX 行: tex: ...
+  if (line.startsWith('tex:')) {
+    scanTexLine(line.slice(4), lineNum, 4, tokens, errors);
+    return;
+  }
+
+  errors.push({ message: `无法识别的行: "${line}"`, line: lineNum, col: 0 });
+}
+
+// ============================================================
+// 小节行扫描: | C . D . |
+// ============================================================
+
+/**
+ * 扫描小节行
+ *
+ * 语法: | token token ... |
+ *   |       → BAR_LINE
+ *   和弦名  → CHORD_BEAT (如 C, Am, D/#F, B7, Em, Gm)
+ *   .       → NOTE_EVENT "." (延续拍，前一个和弦继续)
  */
 function scanMeasureLine(
-  line: string,
-  lineNum: number,
-  tokens: Token[]
+  line: string, lineNum: number,
+  tokens: Token[], errors: ScanError[],
 ): void {
-  // 和弦正则：(ChordName) 可选跟 *N 表示占拍数
-  // 和弦名可包含: 字母、数字、#、b、/
-  const chordRegex = /\(([A-Ga-g][A-Za-z0-9#b/]*)\)(\*(\d+(?:\.\d+)?))?/g;
+  // 按空白分割，逐个处理
+  const parts = line.split(/\s+/).filter(p => p.length > 0);
 
-  let i = 0;
-  while (i < line.length) {
-    const ch = line[i];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    const col = line.indexOf(part, i > 0 ? line.indexOf(parts[i - 1]) + parts[i - 1].length : 0);
 
-    // 跳过空格
-    if (ch === ' ' || ch === '\t') {
-      i++;
-      continue;
-    }
-
-    // 小节线
-    if (ch === '|') {
-      tokens.push(tok('BAR_LINE', '|', lineNum, i));
-      i++;
-      continue;
-    }
-
-    // 空拍/延续标记
-    if (ch === '_') {
-      tokens.push(tok('REST', '_', lineNum, i));
-      i++;
-      continue;
-    }
-
-    // 和弦标记 (X) 或 (X)*N
-    if (ch === '(') {
-      chordRegex.lastIndex = i;
-      const match = chordRegex.exec(line);
-      if (match && match.index === i) {
-        tokens.push(tok('CHORD', match[1], lineNum, i));
-        if (match[3]) {
-          tokens.push(tok('CHORD_BEATS', match[3], lineNum, i + match[0].length - match[3].length));
-        }
-        i = match.index + match[0].length;
-        continue;
-      }
-    }
-
-    // 歌词文本：收集到下一个特殊字符为止
-    const lyricsStart = i;
-    while (i < line.length && line[i] !== '|' && line[i] !== '(' && line[i] !== '_') {
-      i++;
-    }
-    const lyrics = line.slice(lyricsStart, i).trim();
-    if (lyrics) {
-      tokens.push(tok('LYRICS', lyrics, lineNum, lyricsStart));
+    if (part === '|') {
+      tokens.push(tok('BAR_LINE', '|', lineNum, col));
+    } else if (part === '.') {
+      tokens.push(tok('NOTE_EVENT', '.', lineNum, col));
+    } else {
+      // 和弦名: C, Am, D/#F, B7, Em7, Gm, Eb 等
+      tokens.push(tok('CHORD_BEAT', part, lineNum, col));
     }
   }
-
-  tokens.push(tok('NEWLINE', '', lineNum, line.length));
 }
+
+// ============================================================
+// 歌词行扫描: w: [C]约会像是为分[D]享到饱肚
+// ============================================================
 
 /**
- * 兼容旧格式：无小节线的歌词+和弦行
- * 自动为每个和弦生成一个小节
+ * 扫描歌词行内容 (w: 或 w2: 后面的部分)
+ *
+ * 语法:
+ *   [X]  → CHORD_MARK (和弦入点标记)
+ *   文字  → LYRICS (歌词文本片段)
+ *   ~    → LYRICS "~" (延音/无歌词)
+ *
+ * 每个 [X] 标记后面跟着的文字属于该和弦
  */
-function scanLegacyLine(
-  line: string,
-  lineNum: number,
-  tokens: Token[]
+function scanLyricsLine(
+  content: string, lineNum: number, baseCol: number,
+  tokens: Token[], errors: ScanError[],
 ): void {
-  const chordRegex = /\(([A-Ga-g][A-Za-z0-9#b/]*)\)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let hasChords = false;
+  const text = content.trimStart();
+  const trimOffset = content.length - text.length;
+  let pos = 0;
 
-  // 先加一个起始小节线
-  tokens.push(tok('BAR_LINE', '|', lineNum, 0));
-
-  while ((match = chordRegex.exec(line)) !== null) {
-    hasChords = true;
-    // 和弦前的歌词
-    if (match.index > lastIndex) {
-      const lyrics = line.slice(lastIndex, match.index);
-      if (lyrics.trim()) {
-        tokens.push(tok('LYRICS', lyrics, lineNum, lastIndex));
+  while (pos < text.length) {
+    // 和弦标记: [X]
+    if (text[pos] === '[') {
+      const closeIdx = text.indexOf(']', pos + 1);
+      if (closeIdx === -1) {
+        errors.push({ message: `歌词行缺少 ] 闭合`, line: lineNum, col: baseCol + trimOffset + pos });
+        break;
       }
+      const chordName = text.slice(pos + 1, closeIdx);
+      tokens.push(tok('CHORD_MARK', chordName, lineNum, baseCol + trimOffset + pos));
+      pos = closeIdx + 1;
+      continue;
     }
-    // 每个和弦前加小节线（除了第一个）
-    if (lastIndex > 0) {
-      tokens.push(tok('BAR_LINE', '|', lineNum, match.index));
+
+    // 收集文字直到下一个 [ 或行尾
+    let end = pos;
+    while (end < text.length && text[end] !== '[') {
+      end++;
     }
-    tokens.push(tok('CHORD', match[1], lineNum, match.index));
-    lastIndex = match.index + match[0].length;
-  }
-
-  // 最后一段歌词
-  if (lastIndex < line.length) {
-    const remaining = line.slice(lastIndex);
-    if (remaining.trim()) {
-      tokens.push(tok('LYRICS', remaining, lineNum, lastIndex));
+    const lyrics = text.slice(pos, end);
+    if (lyrics.length > 0) {
+      tokens.push(tok('LYRICS', lyrics, lineNum, baseCol + trimOffset + pos));
     }
+    pos = end;
   }
-
-  // 结尾小节线
-  if (hasChords) {
-    tokens.push(tok('BAR_LINE', '|', lineNum, line.length));
-  }
-
-  tokens.push(tok('NEWLINE', '', lineNum, line.length));
 }
 
+
 // ============================================================
-// 工具函数
+// TEX 行扫描: tex: [C]3.5.8 0.3.8 [D]0.4.8 2.3.8
 // ============================================================
 
-function tok(type: TokenType, value: string, line: number, col: number): Token {
-  return { type, value, line, col };
+/**
+ * 扫描 TEX 行内容 (tex: 后面的部分)
+ *
+ * 语法:
+ *   [X]              → CHORD_MARK (和弦入点)
+ *   fret.string.dur  → NOTE_EVENT (单音 beat)
+ *   (f.s f.s).dur    → NOTE_EVENT (多音 beat，保留括号)
+ *   r.dur            → NOTE_EVENT (休止)
+ *
+ * 先发射 TEX_START 标记，然后逐个解析 token
+ */
+function scanTexLine(
+  content: string, lineNum: number, baseCol: number,
+  tokens: Token[], errors: ScanError[],
+): void {
+  tokens.push(tok('TEX_START', 'tex', lineNum, 0));
+
+  const text = content.trim();
+  let pos = 0;
+
+  while (pos < text.length) {
+    // 跳过空白
+    while (pos < text.length && /\s/.test(text[pos])) pos++;
+    if (pos >= text.length) break;
+
+    // 和弦标记: [X]
+    if (text[pos] === '[') {
+      const closeIdx = text.indexOf(']', pos + 1);
+      if (closeIdx === -1) {
+        errors.push({ message: `tex 行缺少 ] 闭合`, line: lineNum, col: baseCol + pos });
+        break;
+      }
+      const chordName = text.slice(pos + 1, closeIdx);
+      tokens.push(tok('CHORD_MARK', chordName, lineNum, baseCol + pos));
+      pos = closeIdx + 1;
+      continue;
+    }
+
+    // 多音 beat: (f.s f.s).dur
+    if (text[pos] === '(') {
+      const closeIdx = text.indexOf(')', pos + 1);
+      if (closeIdx === -1) {
+        errors.push({ message: `tex 行缺少 ) 闭合`, line: lineNum, col: baseCol + pos });
+        break;
+      }
+      // 找到 ) 后面的 .dur 部分
+      let end = closeIdx + 1;
+      // 跳过 .dur 部分
+      while (end < text.length && !(/\s/.test(text[end])) && text[end] !== '[') {
+        end++;
+      }
+      const beatText = text.slice(pos, end);
+      tokens.push(tok('NOTE_EVENT', beatText, lineNum, baseCol + pos));
+      pos = end;
+      continue;
+    }
+
+    // 单音 beat 或 rest: fret.string.dur 或 r.dur
+    let end = pos;
+    while (end < text.length && !/\s/.test(text[end]) && text[end] !== '[') {
+      end++;
+    }
+    const beatText = text.slice(pos, end);
+    if (beatText.length > 0) {
+      tokens.push(tok('NOTE_EVENT', beatText, lineNum, baseCol + pos));
+    }
+    pos = end;
+  }
 }

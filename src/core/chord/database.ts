@@ -1,152 +1,239 @@
 /**
  * 和弦指法数据库
  *
- * 纯数据模块。frets: [6弦, 5弦, 4弦, 3弦, 2弦, 1弦]，-1 = 不弹
+ * 数据源: @tombatossals/chords-db（开源吉他和弦库）
+ * 每个和弦包含多个 positions（变体/把位），带手指编号、横按、MIDI 音高。
+ *
+ * 适配层: 将 chords-db 的数据格式转换为 Lyrichord 的 ChordDefinition。
  */
-import type { GuitarFrets } from '../types';
+import type { ChordDefinition, ChordPosition, GuitarFrets, BarreInfo } from '../types';
+import guitarData from '@tombatossals/chords-db/lib/guitar.json';
 
-type FretDB = Record<string, GuitarFrets>;
+// ---- chords-db 原始类型 ----
+interface RawPosition {
+  frets: number[];
+  fingers: number[];
+  baseFret: number;
+  barres: number[];
+  capo?: boolean;
+  midi: number[];
+}
 
-const MAJOR: FretDB = {
-  'C':  [-1, 3, 2, 0, 1, 0],
-  'D':  [-1, -1, 0, 2, 3, 2],
-  'E':  [0, 2, 2, 1, 0, 0],
-  'F':  [1, 3, 3, 2, 1, 1],
-  'G':  [3, 2, 0, 0, 0, 3],
-  'A':  [-1, 0, 2, 2, 2, 0],
-  'B':  [-1, 2, 4, 4, 4, 2],
+interface RawChord {
+  key: string;
+  suffix: string;
+  positions: RawPosition[];
+}
+
+// ---- suffix → 显示名映射 ----
+const SUFFIX_DISPLAY: Record<string, string> = {
+  'major': '', 'minor': 'm', 'dim': 'dim', 'dim7': 'dim7',
+  'sus2': 'sus2', 'sus4': 'sus4', '7sus4': '7sus4',
+  'aug': 'aug', '6': '6', '69': '69',
+  '7': '7', '7b5': '7b5', 'aug7': 'aug7',
+  '9': '9', '9b5': '9b5', 'aug9': 'aug9',
+  '7b9': '7b9', '7#9': '7#9', 'b13b9': 'b13b9',
+  'maj7': 'maj7', 'maj7b5': 'maj7b5', 'maj7#5': 'maj7#5',
+  'maj9': 'maj9', 'maj11': 'maj11', 'maj13': 'maj13',
+  'm6': 'm6', 'm69': 'm69', 'm7': 'm7', 'm7b5': 'm7b5',
+  'm9': 'm9', 'm11': 'm11', 'mmaj7': 'mmaj7', 'mmaj7b5': 'mmaj7b5',
+  'mmaj9': 'mmaj9', 'mmaj11': 'mmaj11',
+  'add9': 'add9', 'madd9': 'madd9',
+  '11': '11', '13': '13',
+  '/E': '/E', '/F': '/F', '/F#': '/F#', '/G': '/G',
+  '/G#': '/G#', '/A': '/A', '/Bb': '/Bb', '/B': '/B',
+  '/C': '/C', '/C#': '/C#', '/D': '/D', '/D#': '/D#',
+  '7sg': '7', 'alt': 'alt',
 };
 
-const MINOR: FretDB = {
-  'Am':  [-1, 0, 2, 2, 1, 0],
-  'Bm':  [-1, 2, 4, 4, 3, 2],
-  'Cm':  [-1, 3, 5, 5, 4, 3],
-  'Dm':  [-1, -1, 0, 2, 3, 1],
-  'Em':  [0, 2, 2, 0, 0, 0],
-  'Fm':  [1, 3, 3, 1, 1, 1],
-  'Gm':  [3, 5, 5, 3, 3, 3],
+// ---- key 名映射 (chords-db 用 "Csharp"/"Fsharp" 而非 "C#"/"F#") ----
+const KEY_MAP: Record<string, string> = {
+  'C': 'C', 'Csharp': 'C#', 'D': 'D', 'Eb': 'Eb',
+  'E': 'E', 'F': 'F', 'Fsharp': 'F#', 'G': 'G',
+  'Ab': 'Ab', 'A': 'A', 'Bb': 'Bb', 'B': 'B',
 };
 
-const DOMINANT7: FretDB = {
-  'A7':  [-1, 0, 2, 0, 2, 0],
-  'B7':  [-1, 2, 1, 2, 0, 2],
-  'C7':  [-1, 3, 2, 3, 1, 0],
-  'D7':  [-1, -1, 0, 2, 1, 2],
-  'E7':  [0, 2, 0, 1, 0, 0],
-  'G7':  [3, 2, 0, 0, 0, 1],
-};
 
-const MAJOR7: FretDB = {
-  'Cmaj7': [-1, 3, 2, 0, 0, 0],
-  'Dmaj7': [-1, -1, 0, 2, 2, 2],
-  'Fmaj7': [1, 3, 3, 2, 1, 0],
-  'Gmaj7': [3, 2, 0, 0, 0, 2],
-  'Amaj7': [-1, 0, 2, 1, 2, 0],
-};
+/**
+ * 将 chords-db 的 RawPosition 转换为 ChordPosition
+ */
+function convertPosition(raw: RawPosition): ChordPosition {
+  return {
+    frets: raw.frets.slice(0, 6) as unknown as GuitarFrets,
+    fingers: raw.fingers.slice(0, 6) as unknown as GuitarFrets,
+    baseFret: raw.baseFret,
+    barres: raw.barres ?? [],
+    capo: raw.capo,
+    midi: raw.midi ?? [],
+  };
+}
 
-const MINOR7: FretDB = {
-  'Am7':  [-1, 0, 2, 0, 1, 0],
-  'Bm7':  [-1, 2, 4, 2, 3, 2],
-  'Cm7':  [-1, 3, 5, 3, 4, 3],
-  'Dm7':  [-1, -1, 0, 2, 1, 1],
-  'Em7':  [0, 2, 0, 0, 0, 0],
-  'Fm7':  [1, 3, 1, 1, 1, 1],
-  'Gm7':  [3, 5, 3, 3, 3, 3],
-  'F#m7': [2, 4, 2, 2, 2, 2],
-  'C#m7': [-1, 4, 6, 4, 5, 4],
-  'G#m7': [4, 6, 4, 4, 4, 4],
-  'Bbm7': [-1, 1, 3, 1, 2, 1],
-  'Ebm7': [-1, -1, 1, 3, 2, 2],
-};
+/**
+ * 构建和弦 ID（显示名称）
+ * 如 key="C", suffix="major" → "C"
+ *    key="A", suffix="minor" → "Am"
+ *    key="D", suffix="7" → "D7"
+ */
+function buildChordId(key: string, suffix: string): string {
+  const displaySuffix = SUFFIX_DISPLAY[suffix] ?? suffix;
+  return `${key}${displaySuffix}`;
+}
 
-const SUSPENDED: FretDB = {
-  'Dsus2': [-1, -1, 0, 2, 3, 0],
-  'Dsus4': [-1, -1, 0, 2, 3, 3],
-  'Asus2': [-1, 0, 2, 2, 0, 0],
-  'Asus4': [-1, 0, 2, 2, 3, 0],
-  'Esus4': [0, 2, 2, 2, 0, 0],
-};
+/**
+ * 从 position 推断横按信息
+ */
+function inferBarre(pos: ChordPosition): BarreInfo | undefined {
+  if (pos.barres.length === 0) return undefined;
+  const barreFret = pos.barres[0];
+  // 找横按覆盖的弦范围
+  let fromString = 6;
+  let toString = 1;
+  for (let i = 0; i < 6; i++) {
+    const stringNum = 6 - i;
+    if (pos.frets[i] === barreFret || (pos.frets[i] >= 0 && pos.fingers[i] === pos.fingers[pos.frets.indexOf(barreFret)])) {
+      fromString = Math.min(fromString, stringNum);
+      toString = Math.max(toString, stringNum);
+    }
+  }
+  return { fret: barreFret + pos.baseFret - 1, fromString: toString, toString: fromString };
+}
 
-const ADD: FretDB = {
-  'Cadd9': [-1, 3, 2, 0, 3, 0],
-  'Gadd9': [3, 2, 0, 2, 0, 3],
-  'Eadd9': [0, 2, 2, 1, 0, 2],
-};
+/**
+ * 找根音弦号
+ */
+function findRootString(frets: GuitarFrets): number {
+  for (let i = 0; i < frets.length; i++) {
+    if (frets[i] >= 0) return 6 - i;
+  }
+  return 6;
+}
 
-const DIMINISHED: FretDB = {
-  'Bdim':  [-1, 2, 3, 4, 3, -1],
-  'C#dim': [-1, 4, 5, 3, 5, -1],
-  'Ddim':  [-1, -1, 0, 1, 3, 1],
-  'Edim':  [0, 1, 2, 0, -1, -1],
-  'F#dim': [2, 3, 4, 2, -1, -1],
-  'Gdim':  [3, 4, 5, 3, -1, -1],
-  'Adim':  [-1, 0, 1, 2, 1, -1],
-};
+/**
+ * 从 chords-db 构建完整的 ChordDefinition
+ */
+/**
+ * 将相对品位转为绝对品位
+ * chords-db: frets 是 1-based relative to baseFret
+ * 绝对品位 = relativeFret + baseFret - 1 (0 和 -1 保持不变)
+ */
+function toAbsoluteFrets(relativeFrets: GuitarFrets, baseFret: number): GuitarFrets {
+  return relativeFrets.map(f => {
+    if (f <= 0) return f; // 0=空弦, -1=不弹
+    return f + baseFret - 1;
+  }) as unknown as GuitarFrets;
+}
 
-const AUGMENTED: FretDB = {
-  'Caug': [-1, 3, 2, 1, 1, 0],
-  'Daug': [-1, -1, 0, 3, 3, 2],
-  'Eaug': [0, 3, 2, 1, 1, 0],
-  'Faug': [1, 0, 3, 2, 2, 1],
-  'Gaug': [3, 2, 1, 0, 0, 3],
-  'Aaug': [-1, 0, 3, 2, 2, 1],
-};
+function rawToChordDef(raw: RawChord, key: string): ChordDefinition {
+  const id = buildChordId(key, raw.suffix);
+  const positions = raw.positions.map(convertPosition);
+  const first = positions[0];
+  const isSlash = raw.suffix.startsWith('/');
 
-const SIXTH: FretDB = {
-  'C6':  [-1, 3, 2, 2, 1, 0],
-  'D6':  [-1, -1, 0, 2, 0, 2],
-  'E6':  [0, 2, 2, 1, 2, 0],
-  'G6':  [3, 2, 0, 0, 0, 0],
-  'A6':  [-1, 0, 2, 2, 2, 2],
-  'Am6': [-1, 0, 2, 2, 1, 2],
-  'Em6': [0, 2, 2, 0, 2, 0],
-};
+  // frets/fingers 存绝对品位，供 voicing/AlphaTex 生成使用
+  // positions 保留原始相对品位，供 chord-diagram 渲染使用
+  const absoluteFrets = toAbsoluteFrets(first.frets, first.baseFret);
 
-const NINTH: FretDB = {
-  'C9': [-1, 3, 2, 3, 3, 0],
-  'D9': [-1, -1, 0, 2, 1, 0],
-  'E9': [0, 2, 0, 1, 0, 2],
-  'G9': [3, 2, 0, 2, 0, 1],
-  'A9': [-1, 0, 2, 4, 2, 3],
-};
+  return {
+    id,
+    displayName: id,
+    frets: absoluteFrets,
+    fingers: first.fingers,
+    firstFret: first.baseFret,
+    barre: inferBarre(first),
+    rootString: findRootString(absoluteFrets),
+    isSlash,
+    bassNote: isSlash ? raw.suffix.slice(1) : undefined,
+    positions,
+    selectedPosition: 0,
+    midi: first.midi,
+    key,
+    suffix: raw.suffix,
+  };
+}
 
-const POWER: FretDB = {
-  'C5': [-1, 3, 5, 5, -1, -1],
-  'D5': [-1, -1, 0, 2, 3, -1],
-  'E5': [0, 2, 2, -1, -1, -1],
-  'F5': [1, 3, 3, -1, -1, -1],
-  'G5': [3, 5, 5, -1, -1, -1],
-  'A5': [-1, 0, 2, 2, -1, -1],
-  'B5': [-1, 2, 4, 4, -1, -1],
-};
 
-const SLASH: FretDB = {
-  'D/F#': [2, 0, 0, 2, 3, 2],
-  'C/G':  [3, 3, 2, 0, 1, 0],
-  'Am/G': [3, 0, 2, 2, 1, 0],
-  'G/B':  [-1, 2, 0, 0, 0, 3],
-  'Em/B': [-1, 2, 2, 0, 0, 0],
-  'Am/E': [0, 0, 2, 2, 1, 0],
-  'C/E':  [0, 3, 2, 0, 1, 0],
-  'F/C':  [-1, 3, 3, 2, 1, 1],
-};
+// ---- 构建完整和弦库 ----
 
-const ACCIDENTAL: FretDB = {
-  'F#':   [2, 4, 4, 3, 2, 2],
-  'F#m':  [2, 4, 4, 2, 2, 2],
-  'G#m':  [4, 6, 6, 4, 4, 4],
-  'C#m':  [-1, 4, 6, 6, 5, 4],
-  'Bb':   [-1, 1, 3, 3, 3, 1],
-  'Bbm':  [-1, 1, 3, 3, 2, 1],
-  'Eb':   [-1, -1, 1, 3, 4, 3],
-  'Ebm':  [-1, -1, 1, 3, 4, 2],
-  'Ab':   [4, 6, 6, 5, 4, 4],
-  'Abm':  [4, 6, 6, 4, 4, 4],
-  'Bb7':  [-1, 1, 3, 1, 3, 1],
-  'Eb7':  [-1, -1, 1, 3, 2, 3],
-  'Ab7':  [4, 6, 4, 5, 4, 4],
-  'F#7':  [2, 4, 2, 3, 2, 2],
-};
+/** 按 ID 索引的和弦库（所有变体） */
+const CHORD_MAP = new Map<string, ChordDefinition>();
+
+/** 按 key+suffix 索引 */
+const CHORD_BY_KEY_SUFFIX = new Map<string, ChordDefinition>();
+
+// 初始化
+const chords = (guitarData as any).chords as Record<string, RawChord[]>;
+for (const [rawKey, chordList] of Object.entries(chords)) {
+  const key = KEY_MAP[rawKey] ?? rawKey;
+  for (const raw of chordList) {
+    const def = rawToChordDef(raw, key);
+    CHORD_MAP.set(def.id, def);
+    CHORD_BY_KEY_SUFFIX.set(`${key}:${raw.suffix}`, def);
+  }
+}
+
+// ---- 公开 API ----
+
+/**
+ * 按 ID 查找和弦（如 "C", "Am7", "D7"）
+ */
+export function getChordFromDB(id: string): ChordDefinition | undefined {
+  return CHORD_MAP.get(id);
+}
+
+/**
+ * 按 key + suffix 查找（如 key="C", suffix="major"）
+ */
+export function getChordByKeySuffix(key: string, suffix: string): ChordDefinition | undefined {
+  return CHORD_BY_KEY_SUFFIX.get(`${key}:${suffix}`);
+}
+
+/**
+ * 获取所有和弦 ID
+ */
+export function getAllChordIds(): string[] {
+  return Array.from(CHORD_MAP.keys());
+}
+
+/**
+ * 获取所有和弦定义
+ */
+export function getAllChordDefs(): ChordDefinition[] {
+  return Array.from(CHORD_MAP.values());
+}
+
+/**
+ * 获取某个根音下的所有和弦
+ */
+export function getChordsByKey(key: string): ChordDefinition[] {
+  const result: ChordDefinition[] = [];
+  for (const [k, v] of CHORD_BY_KEY_SUFFIX) {
+    if (k.startsWith(`${key}:`)) result.push(v);
+  }
+  return result;
+}
+
+/**
+ * 搜索和弦（模糊匹配 ID）
+ */
+export function searchChordsInDB(query: string): ChordDefinition[] {
+  const q = query.toLowerCase();
+  const result: ChordDefinition[] = [];
+  for (const [id, def] of CHORD_MAP) {
+    if (id.toLowerCase().includes(q)) result.push(def);
+  }
+  return result;
+}
+
+// ---- 兼容旧接口 ----
+
+/**
+ * 旧版 CHORD_DATABASE 兼容（只返回默认指法）
+ * @deprecated 使用 getChordFromDB 代替
+ */
+export const CHORD_DATABASE: Record<string, GuitarFrets> = {};
+for (const [id, def] of CHORD_MAP) {
+  CHORD_DATABASE[id] = def.frets;
+}
 
 /** 别名映射 */
 export const CHORD_ALIASES: Record<string, string> = {
@@ -155,11 +242,4 @@ export const CHORD_ALIASES: Record<string, string> = {
   'Bo': 'Bdim',
   'C+': 'Caug', 'D+': 'Daug', 'E+': 'Eaug',
   'F+': 'Faug', 'G+': 'Gaug', 'A+': 'Aaug',
-};
-
-/** 合并所有和弦 */
-export const CHORD_DATABASE: Record<string, GuitarFrets> = {
-  ...MAJOR, ...MINOR, ...DOMINANT7, ...MAJOR7, ...MINOR7,
-  ...SUSPENDED, ...ADD, ...DIMINISHED, ...AUGMENTED,
-  ...SIXTH, ...NINTH, ...POWER, ...SLASH, ...ACCIDENTAL,
 };

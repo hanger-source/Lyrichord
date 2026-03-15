@@ -1,17 +1,72 @@
 /**
  * Lyrichord 主应用组件
+ *
+ * 布局: Header + [Editor(左) | Score(中) | Sidebar(右)]
+ * 编辑器和侧边栏可折叠，曲谱始终占主区域。
  */
+import { useState, useCallback } from 'react';
 import { useAppState } from './hooks/useAppState';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { EditorPane } from './components/EditorPane';
 import { ScorePane } from './components/ScorePane';
+import { TabEditor } from './components/TabEditor';
+import type { ChordSelectionPending } from './components/TabEditor';
+import { applyTheme, lightColors, darkColors, layout } from './theme';
+import type { ColorTokens } from './theme';
 import demoTmd from '../data/demo-you-man-wo-man.tmd?raw';
 
 export function App() {
   const state = useAppState(demoTmd);
+  const [editorCollapsed, setEditorCollapsed] = useState(false);
+  const [editorMode, setEditorMode] = useState<'tmd' | 'tab'>(() => {
+    try {
+      const saved = localStorage.getItem('lyrichord-editor-mode');
+      if (saved === 'tmd' || saved === 'tab') return saved;
+    } catch {}
+    return 'tmd';
+  });
 
-  // DB 初始化错误
+  const setEditorModeAndSave = useCallback((mode: 'tmd' | 'tab') => {
+    setEditorMode(mode);
+    try { localStorage.setItem('lyrichord-editor-mode', mode); } catch {}
+  }, []);
+  const [activeColors, setActiveColors] = useState<ColorTokens>(lightColors);
+  // TAB ↔ 和弦库联动
+  const [chordToApply, setChordToApply] = useState<string | null>(null);
+  const [highlightChord, setHighlightChord] = useState<string | null>(null);
+
+  const toggleTheme = useCallback(() => {
+    setActiveColors(prev => {
+      const next = prev === lightColors ? darkColors : lightColors;
+      applyTheme({ ...next, ...layout });
+      return next;
+    });
+  }, []);
+
+  // TabEditor 拖选完成 → 打开侧边栏和弦库
+  const handleChordSelectionStart = useCallback((_sel: ChordSelectionPending) => {
+    // 自动打开和弦库侧边栏
+    if (state.sidebarTab !== 'chords') {
+      state.setSidebarTab('chords');
+    }
+  }, [state.sidebarTab, state.setSidebarTab]);
+
+  // 侧边栏和弦库选中和弦
+  const handleChordPicked = useCallback((chordName: string) => {
+    setChordToApply(chordName);
+  }, []);
+
+  // TAB 编辑器点击和弦 → 高亮侧边栏对应卡片
+  const handleChordClick = useCallback((chordName: string) => {
+    if (state.sidebarTab !== 'chords') state.setSidebarTab('chords');
+    setHighlightChord(chordName);
+  }, [state.sidebarTab, state.setSidebarTab]);
+
+  const handleChordApplied = useCallback(() => {
+    setChordToApply(null);
+  }, []);
+
   if (state.dbError) {
     return (
       <div className="app-root">
@@ -34,8 +89,39 @@ export function App() {
         saveMessage={state.saveMessage}
         dbReady={state.dbReady}
         currentScoreId={state.currentScoreId}
+        editorCollapsed={editorCollapsed}
+        onToggleEditor={() => setEditorCollapsed(!editorCollapsed)}
+        editorMode={editorMode}
+        onSetEditorMode={setEditorModeAndSave}
+        isDark={activeColors === darkColors}
+        onToggleTheme={toggleTheme}
       />
       <div className="main-layout">
+        {!editorCollapsed && editorMode === 'tmd' && (
+          <EditorPane
+            source={state.tmdSource}
+            onChange={state.setTmdSource}
+            errors={state.pipelineResult?.errors ?? []}
+            warnings={state.pipelineResult?.warnings ?? []}
+          />
+        )}
+        {!editorCollapsed && editorMode === 'tab' && (
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
+            <TabEditor
+              onTmdChange={state.setTmdSource}
+              onChordSelectionStart={handleChordSelectionStart}
+              chordToApply={chordToApply}
+              onChordApplied={handleChordApplied}
+              onChordClick={handleChordClick}
+            />
+          </div>
+        )}
+        <ScorePane
+          pipelineResult={state.pipelineResult}
+          playbackState={state.playbackState}
+          onPlaybackStateChange={state.setPlaybackState}
+          colors={activeColors}
+        />
         {state.sidebarTab && (
           <Sidebar
             tab={state.sidebarTab}
@@ -47,19 +133,11 @@ export function App() {
             }}
             onDeleteScore={state.handleDeleteScore}
             onLoadVersion={state.loadVersion}
+            onChordPick={editorMode === 'tab' ? handleChordPicked : undefined}
+            highlightChord={highlightChord}
+            onHighlightClear={() => setHighlightChord(null)}
           />
         )}
-        <EditorPane
-          source={state.tmdSource}
-          onChange={state.setTmdSource}
-          errors={state.pipelineResult?.errors ?? []}
-          warnings={state.pipelineResult?.warnings ?? []}
-        />
-        <ScorePane
-          pipelineResult={state.pipelineResult}
-          playbackState={state.playbackState}
-          onPlaybackStateChange={state.setPlaybackState}
-        />
       </div>
     </div>
   );

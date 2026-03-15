@@ -32,8 +32,8 @@
 /**
  * 音符时值
  *
- * 值 = 几分音符的分母，与 AlphaTab Duration 枚举对齐。
- * 全音符=1, 二分=2, 四分=4, 八分=8, 十六分=16, 三十二分=32
+ * 值 = 几分音符的分母，与 AlphaTab / powertabeditor / tuxguitar 对齐。
+ * 全音符=1, 二分=2, 四分=4, 八分=8, 十六分=16, 三十二分=32, 六十四分=64
  */
 export enum Duration {
   Whole        = 1,
@@ -42,6 +42,7 @@ export enum Duration {
   Eighth       = 8,
   Sixteenth    = 16,
   ThirtySecond = 32,
+  SixtyFourth  = 64,
 }
 
 /**
@@ -51,23 +52,39 @@ export enum Duration {
  *   1 拍    → { base: Quarter, dots: 0 }
  *   1.5 拍  → { base: Quarter, dots: 1 }          附点四分
  *   3 拍    → { base: Half,    dots: 1 }          附点二分
- *   2/3 拍  → { base: Quarter, dots: 0, tuplet: {n:3, of:2} }
+ *   2/3 拍  → { base: Quarter, dots: 0, tuplet: {enters:3, times:2} }
  */
 export interface DurationValue {
   base: Duration;
   /** 0=无附点, 1=单附点, 2=双附点 */
   dots: number;
-  /** 连音组（三连音 = {n:3, of:2}，五连音 = {n:5, of:4}） */
-  tuplet?: TupletGroup;
+  /** 连音分割 (三连音 = DIVISION_TRIPLET, 五连音 = DIVISION_QUINTUPLET) */
+  tuplet?: DivisionType;
 }
 
 /**
- * 连音组: n 个音符均分 of 个标准音符的时间
+ * 连音分割类型 (Division Type)
+ *
+ * 对齐 tuxguitar 的 TGDivisionType / powertabeditor 的 IrregularGrouping:
+ *   enters 个音符均分 times 个标准音符的时间
+ *
+ * 例: 三连音 = { enters: 3, times: 2 } — 3 个音符占 2 个标准音符的时间
  */
-export interface TupletGroup {
-  n: number;
-  of: number;
+export interface DivisionType {
+  /** 实际演奏的音符数 */
+  enters: number;
+  /** 等分的标准音符数 */
+  times: number;
 }
+
+/** 预定义连音类型常量 */
+export const DIVISION_NORMAL:      DivisionType = { enters: 1,  times: 1 };
+export const DIVISION_TRIPLET:     DivisionType = { enters: 3,  times: 2 };
+export const DIVISION_QUINTUPLET:  DivisionType = { enters: 5,  times: 4 };
+export const DIVISION_SEXTUPLET:   DivisionType = { enters: 6,  times: 4 };
+export const DIVISION_SEPTUPLET:   DivisionType = { enters: 7,  times: 4 };
+export const DIVISION_NONTUPLET:   DivisionType = { enters: 9,  times: 8 };
+export const DIVISION_TREDECIMOLE: DivisionType = { enters: 13, times: 8 };
 
 /**
  * 拍号
@@ -111,10 +128,24 @@ export interface Note {
   string: number;
   /** 品位 0-24 (0=空弦) */
   fret: number;
-  /** 连线起点 — 连到下一个同弦同品音符 */
-  tie?: 'start' | 'stop';
+  /**
+   * 是否连线到前一个同弦同品音符
+   *
+   * 对齐 alphaTab / tuxguitar 的 tie 语义:
+   * tied=true 表示此音符与前面最近的同弦同品音符连线，不重新发声。
+   * 比 'start'|'stop' 更简洁，也是业界标准做法。
+   */
+  tied?: boolean;
   /** 幽灵音 / 死音 */
   isGhost?: boolean;
+  /**
+   * MIDI 力度 0-127
+   *
+   * 对齐 MIDI velocity / tuxguitar TGVelocities:
+   *   ppp=15, pp=31, p=47, mp=63, mf=79, f=95, ff=111, fff=127
+   * undefined = 使用 Beat 或 MasterBar 级别的力度
+   */
+  velocity?: number;
   /** 音符级别技巧 */
   techniques?: NoteTechnique[];
 }
@@ -138,24 +169,82 @@ export type NoteTechnique =
   | { type: 'slap' }
   | { type: 'pop' };
 
+/**
+ * 效果互斥规则
+ *
+ * 对齐 powertabeditor 的效果互斥逻辑:
+ * - let-ring 和 palm-mute 互斥 (物理上不可能同时)
+ * - hammer-on 和 pull-off 互斥 (同一音符只能是其中一种)
+ * - slap 和 pop 互斥 (贝斯技巧，同一音符只能一种)
+ *
+ * 返回去重后的技巧列表，后出现的同组技巧覆盖先出现的。
+ */
+export function validateNoteEffects(techniques: NoteTechnique[]): NoteTechnique[] {
+  const exclusionGroups: string[][] = [
+    ['let-ring', 'palm-mute'],
+    ['hammer-on', 'pull-off'],
+    ['slap', 'pop'],
+  ];
+
+  const result: NoteTechnique[] = [];
+  const activeTypes = new Set<string>();
+
+  // 后出现的覆盖先出现的 — 先反转处理，再反转回来
+  for (const tech of [...techniques].reverse()) {
+    if (activeTypes.has(tech.type)) continue;
+
+    // 检查互斥组
+    const group = exclusionGroups.find(g => g.includes(tech.type));
+    if (group && group.some(t => activeTypes.has(t))) continue;
+
+    activeTypes.add(tech.type);
+    result.push(tech);
+  }
+
+  return result.reverse();
+}
+
 // ================================================================
 //  §3  和弦
 // ================================================================
+
+/**
+ * 和弦指法位置（一个变体/把位）
+ *
+ * 来源: @tombatossals/chords-db 或用户自定义
+ */
+export interface ChordPosition {
+  /** 6 弦品位 [6弦→1弦]，-1=不弹 */
+  frets: GuitarFrets;
+  /** 手指编号 [6弦→1弦]，0=不按/空弦, 1=食指, 2=中指, 3=无名指, 4=小指 */
+  fingers: GuitarFrets;
+  /** 起始品位（1=开放把位） */
+  baseFret: number;
+  /** 横按品位列表 */
+  barres: number[];
+  /** 是否使用 capo 式横按 */
+  capo?: boolean;
+  /** 各弦 MIDI 音高（不弹的弦不包含） */
+  midi: number[];
+}
 
 /**
  * 和弦指法定义
  *
  * 存储在 Song.chordLibrary 中，Beat 通过 chordId 引用。
  * 内置和弦库 + 用户自定义和弦都统一存这里。
+ *
+ * 支持多变体: positions 数组存所有把位/指法变体，
+ * frets/fingers 是当前选中的指法（默认 positions[0]）。
  */
 export interface ChordDefinition {
   /** 唯一标识 (如 "C", "Am7", "D/F#") */
   id: string;
   /** 显示名称 (可能和 id 不同，如别名 "D/#F" → 显示 "D/F#") */
   displayName: string;
-  /** 6 弦指法 */
+  /** 当前选中的 6 弦指法（= positions[selectedPosition].frets） */
   frets: GuitarFrets;
-  /** 建议按弦手指 (可选) */
+  /** 当前选中的手指编号 */
   fingers?: GuitarFrets;
   /** 起始品位 — 高把位和弦图显示用 */
   firstFret?: number;
@@ -167,6 +256,16 @@ export interface ChordDefinition {
   isSlash?: boolean;
   /** Slash Chord 的 bass 音名 */
   bassNote?: string;
+  /** 所有指法变体 */
+  positions?: ChordPosition[];
+  /** 当前选中的 position 索引（默认 0） */
+  selectedPosition?: number;
+  /** 各弦 MIDI 音高 */
+  midi?: number[];
+  /** 和弦根音 (key)，如 "C", "A" */
+  key?: string;
+  /** 和弦类型后缀，如 "major", "minor", "7" */
+  suffix?: string;
 }
 
 /** 横按 */
@@ -239,6 +338,15 @@ export interface Beat {
   notes: Note[];
   /** 是否休止 */
   isRest: boolean;
+  /**
+   * 精确时间位置 (tick)，相对于小节起始
+   *
+   * 对齐 alphaTab Beat.playbackStart / tuxguitar TGBeat.start:
+   * 用于精确定位 beat 在小节内的时间偏移。
+   * 单位: 以四分音符 = 960 ticks (MIDI 标准 PPQ)
+   * undefined = 由播放引擎按顺序计算
+   */
+  tick?: number;
   /**
    * 和弦引用 (chordLibrary 的 key)
    *
@@ -333,8 +441,17 @@ export interface SectionMarker {
 export interface Bar {
   /** 对应的 MasterBar 索引 */
   masterBarIndex: number;
-  /** 拍序列 */
+  /** 拍序列 (默认 voice 0) */
   beats: Beat[];
+  /**
+   * 多声部预留
+   *
+   * 对齐 alphaTab Voice[] / tuxguitar TGVoice[]:
+   * voices[0] = 主声部 (等同于 beats)
+   * voices[1] = 第二声部 (如有)
+   * undefined = 单声部，使用 beats
+   */
+  voices?: Beat[][];
 }
 
 // ================================================================
@@ -384,7 +501,12 @@ export type TokenType =
   | 'SECTION'      | 'CHORD'       | 'CHORD_BEATS'
   | 'LYRICS'       | 'REST'        | 'BAR_LINE'
   | 'RHYTHM_REF'   | 'NEWLINE'
-  | 'HEADER_START' | 'HEADER_END'  | 'COMMENT';
+  | 'HEADER_START' | 'HEADER_END'  | 'COMMENT'
+  | 'NOTE_EVENT'   // v4: "." = hold beat (延续拍), 或 tex 行的 AlphaTex beat
+  | 'CHORD_MARK'   // [C] 和弦位置标记 (歌词行/tex行)
+  | 'CHORD_BEAT'   // v4: 小节行里的和弦名，占1拍
+  | 'TEX_START'    // tex: 行开始标记
+  | 'W2_START';    // w2: 行开始标记
 
 export interface Token {
   type: TokenType;
@@ -475,7 +597,7 @@ export function durationToBeats(dv: DurationValue): number {
   }
   // 连音
   if (dv.tuplet) {
-    beats = beats * (dv.tuplet.of / dv.tuplet.n);
+    beats = beats * (dv.tuplet.times / dv.tuplet.enters);
   }
   return beats;
 }

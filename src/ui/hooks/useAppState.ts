@@ -7,16 +7,23 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { tmdToAlphaTex, type PipelineResult } from '../../core/pipeline';
 import { saveScore, deleteScore, getVersionById } from '../../db/score-repo';
 import { bulkUpsertRhythms } from '../../db/rhythm-repo';
+import { upsertChord } from '../../db/chord-repo';
 import { initDatabase } from '../../db/init';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
-export type SidebarTab = 'chords' | 'rhythms' | 'scores' | null;
+export type SidebarTab = 'chords' | 'rhythms' | 'scores' | 'tabeditor' | null;
 
 export function useAppState(initialTmd: string) {
   const [tmdSource, setTmdSourceRaw] = useState(initialTmd);
   const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>('stopped');
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(null);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => {
+    try {
+      const saved = localStorage.getItem('lyrichord-sidebar-tab');
+      if (saved && ['chords', 'rhythms', 'scores', 'tabeditor'].includes(saved)) return saved as SidebarTab;
+    } catch {}
+    return null;
+  });
   const [currentScoreId, setCurrentScoreId] = useState<string | null>(null);
   const [currentVersionId, setCurrentVersionId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -42,11 +49,18 @@ export function useAppState(initialTmd: string) {
     const result = tmdToAlphaTex(source);
     setPipelineResult(result);
 
-    // 异步同步节奏型到 DB
+    // 异步同步节奏型和自定义和弦到 DB
     if (result.song) {
       const rhythms = Array.from(result.song.rhythmLibrary.values());
       if (rhythms.length > 0) {
         bulkUpsertRhythms(rhythms, 'score').catch(console.error);
+      }
+      // 同步用户自定义和弦
+      const customChords = Array.from(result.song.chordLibrary.values());
+      if (customChords.length > 0) {
+        Promise.all(
+          customChords.map(c => upsertChord(c, 'user'))
+        ).catch(console.error);
       }
     }
     return result;
@@ -119,7 +133,11 @@ export function useAppState(initialTmd: string) {
   }, [currentScoreId]);
 
   const toggleSidebar = useCallback((tab: SidebarTab) => {
-    setSidebarTab(prev => prev === tab ? null : tab);
+    setSidebarTab(prev => {
+      const next = prev === tab ? null : tab;
+      try { localStorage.setItem('lyrichord-sidebar-tab', next ?? ''); } catch {}
+      return next;
+    });
   }, []);
 
   return {

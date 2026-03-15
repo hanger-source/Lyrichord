@@ -28,17 +28,23 @@ function rowToChord(row: Record<string, unknown>): ChordDefinition {
       toString: row.barre_to as number,
     };
   }
+  if (row.positions_json) {
+    try { chord.positions = JSON.parse(row.positions_json as string); } catch {}
+  }
+  if (row.midi_json) {
+    try { chord.midi = JSON.parse(row.midi_json as string); } catch {}
+  }
+  if (row.chord_key) chord.key = row.chord_key as string;
+  if (row.suffix) chord.suffix = row.suffix as string;
   return chord;
 }
 
-/** 查询辅助: exec 返回对象数组 */
+/** 查询辅助 */
 function queryAll(db: Database, sql: string, params?: unknown[]): Record<string, unknown>[] {
   const stmt = db.prepare(sql);
   if (params) stmt.bind(params);
   const rows: Record<string, unknown>[] = [];
-  while (stmt.step()) {
-    rows.push(stmt.getAsObject());
-  }
+  while (stmt.step()) rows.push(stmt.getAsObject());
   stmt.free();
   return rows;
 }
@@ -50,26 +56,22 @@ function queryOne(db: Database, sql: string, params?: unknown[]): Record<string,
 
 // ---- 公开 API ----
 
-/** 获取所有和弦 */
 export async function getAllChords(): Promise<ChordDefinition[]> {
   const db = await getDb();
   return queryAll(db, 'SELECT * FROM chords ORDER BY id').map(rowToChord);
 }
 
-/** 按 ID 获取和弦 */
 export async function getChordById(id: string): Promise<ChordDefinition | null> {
   const db = await getDb();
   const row = queryOne(db, 'SELECT * FROM chords WHERE id = ?', [id]);
   return row ? rowToChord(row) : null;
 }
 
-/** 按来源获取和弦 */
 export async function getChordsBySource(source: string): Promise<ChordDefinition[]> {
   const db = await getDb();
   return queryAll(db, 'SELECT * FROM chords WHERE source = ? ORDER BY id', [source]).map(rowToChord);
 }
 
-/** 搜索和弦（模糊匹配 id 或 display_name） */
 export async function searchChords(query: string): Promise<ChordDefinition[]> {
   const db = await getDb();
   const like = `%${query}%`;
@@ -80,6 +82,7 @@ export async function searchChords(query: string): Promise<ChordDefinition[]> {
   ).map(rowToChord);
 }
 
+
 /** 插入或更新和弦 */
 export async function upsertChord(
   chord: ChordDefinition,
@@ -88,14 +91,17 @@ export async function upsertChord(
   const db = await getDb();
   db.run(
     `INSERT INTO chords (id, display_name, frets, fingers, first_fret,
-       barre_fret, barre_from, barre_to, root_string, is_slash, bass_note, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       barre_fret, barre_from, barre_to, root_string, is_slash, bass_note,
+       positions_json, midi_json, chord_key, suffix, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        display_name=excluded.display_name, frets=excluded.frets,
        fingers=excluded.fingers, first_fret=excluded.first_fret,
        barre_fret=excluded.barre_fret, barre_from=excluded.barre_from,
        barre_to=excluded.barre_to, root_string=excluded.root_string,
        is_slash=excluded.is_slash, bass_note=excluded.bass_note,
+       positions_json=excluded.positions_json, midi_json=excluded.midi_json,
+       chord_key=excluded.chord_key, suffix=excluded.suffix,
        source=excluded.source, updated_at=datetime('now')`,
     [
       chord.id,
@@ -109,6 +115,10 @@ export async function upsertChord(
       chord.rootString ?? null,
       chord.isSlash ? 1 : 0,
       chord.bassNote ?? null,
+      chord.positions ? JSON.stringify(chord.positions) : null,
+      chord.midi ? JSON.stringify(chord.midi) : null,
+      chord.key ?? null,
+      chord.suffix ?? null,
       source,
     ]
   );
@@ -127,8 +137,9 @@ export async function bulkUpsertChords(
     for (const chord of chords) {
       db.run(
         `INSERT INTO chords (id, display_name, frets, fingers, first_fret,
-           barre_fret, barre_from, barre_to, root_string, is_slash, bass_note, source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           barre_fret, barre_from, barre_to, root_string, is_slash, bass_note,
+           positions_json, midi_json, chord_key, suffix, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO NOTHING`,
         [
           chord.id,
@@ -142,6 +153,10 @@ export async function bulkUpsertChords(
           chord.rootString ?? null,
           chord.isSlash ? 1 : 0,
           chord.bassNote ?? null,
+          chord.positions ? JSON.stringify(chord.positions) : null,
+          chord.midi ? JSON.stringify(chord.midi) : null,
+          chord.key ?? null,
+          chord.suffix ?? null,
           source,
         ]
       );
@@ -156,14 +171,12 @@ export async function bulkUpsertChords(
   return count;
 }
 
-/** 删除和弦 */
 export async function deleteChord(id: string): Promise<void> {
   const db = await getDb();
   db.run('DELETE FROM chords WHERE id = ?', [id]);
   await persist();
 }
 
-/** 获取和弦被引用的吉他谱版本数 */
 export async function getChordUsageCount(chordId: string): Promise<number> {
   const db = await getDb();
   const row = queryOne(

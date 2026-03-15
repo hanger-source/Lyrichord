@@ -30,13 +30,22 @@ export function getPlayableNotes(frets: GuitarFrets): Note[] {
 }
 
 /** 单音 → AlphaTex: "fret.string" */
-export function noteToAlphaTex(note: Note): string {
-  return `${note.fret}.${note.string}`;
+export function noteToAlphaTex(note: Note, noteEffect?: string): string {
+  const base = `${note.fret}.${note.string}`;
+  return noteEffect ? `${base}${noteEffect}` : base;
 }
 
-/** 多音 → AlphaTex: 单音 "3.6"，多音 "(3.6 2.5 0.4)" */
-export function notesToAlphaTex(notes: Note[]): string {
+/**
+ * 多音 → AlphaTex
+ *
+ * noteEffect 是 note-level 属性（如 {t} tie, {x} dead），
+ * 会附着在每个音符上（AlphaTab 要求 note-level 属性在每个音符后面）。
+ *
+ * 单音: "3.6{t}"
+ * 多音: "(3.6{t} 2.5{t} 0.4{t})"
+ */
+export function notesToAlphaTex(notes: Note[], noteEffect?: string): string {
   if (notes.length === 0) return 'r';
-  if (notes.length === 1) return noteToAlphaTex(notes[0]);
-  return `(${notes.map(noteToAlphaTex).join(' ')})`;
+  if (notes.length === 1) return noteToAlphaTex(notes[0], noteEffect);
+  return `(${notes.map(n => noteToAlphaTex(n, noteEffect)).join(' ')})`;
 }

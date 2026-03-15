@@ -3,15 +3,15 @@
  *
  * 职责:
  * 1. 标准化和弦名称 (别名处理)
- * 2. 从数据库查找指法
+ * 2. 从 chords-db 查找完整指法（含多变体、手指、MIDI）
  * 3. 构建 ChordDefinition
  * 4. 管理用户自定义和弦
  */
 import type { ChordDefinition, GuitarFrets } from '../types';
-import { CHORD_DATABASE, CHORD_ALIASES } from './database';
+import { getChordFromDB, CHORD_ALIASES } from './database';
 
-/** 用户自定义和弦 */
-let customChords = new Map<string, GuitarFrets>();
+/** 用户自定义和弦（TMD define 语法） */
+let customChords = new Map<string, ChordDefinition>();
 
 export function clearCustomChords(): void {
   customChords = new Map();
@@ -20,7 +20,7 @@ export function clearCustomChords(): void {
 export function setCustomChords(chords: Map<string, ChordDefinition>): void {
   customChords = new Map();
   for (const [k, v] of chords) {
-    customChords.set(k, v.frets);
+    customChords.set(k, v);
   }
 }
 
@@ -35,39 +35,29 @@ export function normalizeChordName(raw: string): string {
   return raw;
 }
 
-/** 查找指法 */
+/** 查找指法（仅 frets，兼容旧调用） */
 export function findFrets(name: string): GuitarFrets | null {
-  const custom = customChords.get(name);
-  if (custom) return custom;
-  const exact = CHORD_DATABASE[name];
-  if (exact) return exact;
-  const norm = normalizeChordName(name);
-  return customChords.get(norm) ?? CHORD_DATABASE[norm] ?? null;
+  const def = resolveChord(name);
+  return def?.frets ?? null;
 }
 
-/** 解析和弦 → ChordDefinition */
+/** 解析和弦 → 完整 ChordDefinition（含 positions、fingers、midi） */
 export function resolveChord(raw: string): ChordDefinition | null {
   const name = normalizeChordName(raw);
-  const frets = findFrets(name);
-  if (!frets) return null;
 
-  const isSlash = name.includes('/');
-  const parts = isSlash ? name.split('/') : null;
+  // 1. 先查用户自定义
+  const custom = customChords.get(name) ?? customChords.get(raw);
+  if (custom) return custom;
 
-  return {
-    id: name,
-    displayName: name,
-    frets,
-    isSlash,
-    bassNote: parts?.[1],
-    rootString: findRootString(frets),
-  };
-}
+  // 2. 查 chords-db
+  const fromDB = getChordFromDB(name);
+  if (fromDB) return fromDB;
 
-/** 找根音弦号 (最低有效弦) */
-function findRootString(frets: GuitarFrets): number {
-  for (let i = 0; i < frets.length; i++) {
-    if (frets[i] >= 0) return 6 - i;
+  // 3. 尝试原始名
+  if (name !== raw) {
+    const fromDBRaw = getChordFromDB(raw);
+    if (fromDBRaw) return fromDBRaw;
   }
-  return 6;
+
+  return null;
 }
