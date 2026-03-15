@@ -5,7 +5,7 @@
  */
 import { useRef, useEffect, useCallback, useState, memo } from 'react';
 import * as alphaTab from '@coderline/alphatab';
-import { Play, Pause, Square, SkipBack, Loader } from 'lucide-react';
+import { Play, Pause, Square, RotateCcw, Loader } from 'lucide-react';
 import { initChordTooltip, destroyChordTooltip } from '../chord-tooltip';
 import type { PipelineResult } from '../../core/pipeline';
 import type { PlaybackState } from '../hooks/useAppState';
@@ -266,7 +266,7 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
         </span>
         <div className="player-controls">
           <button className="btn-player" onClick={handleRestart} disabled={!playerReady} title="从头播放">
-            <SkipBack size={13} />
+            <RotateCcw size={13} />
           </button>
           <button
             className={`btn-player ${playbackState === 'playing' ? 'btn-player--active' : ''}`}
