@@ -1,0 +1,33 @@
+{
+  "name": "lyrichord",
+  "version": "0.1.0",
+  "description": "文本驱动的吉他弹唱谱平台 — Write Lyrics, Play Chords, Hear the Soul.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanger-source/ChordEcho.git"
+  },
+  "keywords": [
+    "guitar",
+    "tab",
+    "chord",
+    "lyrics",
+    "alphatab",
+    "music"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@coderline/alphatab": "^1.8.1",
+    "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^6.3.5"
+  }
+}
