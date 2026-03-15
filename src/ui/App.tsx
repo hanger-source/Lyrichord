@@ -14,6 +14,7 @@ import { TabEditor } from './components/TabEditor';
 import type { ChordSelectionPending } from './components/TabEditor';
 import { applyTheme, lightColors, darkColors, layout } from './theme';
 import type { ColorTokens } from './theme';
+import { tmdToAlphaTex, type PipelineResult } from '../core/pipeline';
 import demoTmd from '../data/demo-you-man-wo-man.tmd?raw';
 
 export function App() {
@@ -32,9 +33,21 @@ export function App() {
     try { localStorage.setItem('lyrichord-editor-mode', mode); } catch {}
   }, []);
   const [activeColors, setActiveColors] = useState<ColorTokens>(lightColors);
+  // TAB 模式曲谱预览开关
+  const [tabPreviewOpen, setTabPreviewOpen] = useState(true);
   // TAB ↔ 和弦库联动
   const [chordToApply, setChordToApply] = useState<string | null>(null);
   const [highlightChord, setHighlightChord] = useState<string | null>(null);
+  // TAB 编辑器独立的 TMD 输出 + pipeline 结果
+  const [tabPipelineResult, setTabPipelineResult] = useState<PipelineResult | null>(null);
+
+  const handleTabTmdChange = useCallback((tmd: string) => {
+    if (tmd.trim()) {
+      setTabPipelineResult(tmdToAlphaTex(tmd));
+    } else {
+      setTabPipelineResult(null);
+    }
+  }, []);
 
   const toggleTheme = useCallback(() => {
     setActiveColors(prev => {
@@ -108,20 +121,34 @@ export function App() {
         {!editorCollapsed && editorMode === 'tab' && (
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
             <TabEditor
-              onTmdChange={state.setTmdSource}
+              onTmdChange={handleTabTmdChange}
               onChordSelectionStart={handleChordSelectionStart}
               chordToApply={chordToApply}
               onChordApplied={handleChordApplied}
               onChordClick={handleChordClick}
+              previewOpen={tabPreviewOpen}
+              onTogglePreview={() => setTabPreviewOpen(p => !p)}
             />
           </div>
         )}
-        <ScorePane
-          pipelineResult={state.pipelineResult}
-          playbackState={state.playbackState}
-          onPlaybackStateChange={state.setPlaybackState}
-          colors={activeColors}
-        />
+        {editorMode !== 'tab' && (
+          <ScorePane
+            pipelineResult={state.pipelineResult}
+            playbackState={state.playbackState}
+            onPlaybackStateChange={state.setPlaybackState}
+            colors={activeColors}
+          />
+        )}
+        {editorMode === 'tab' && (
+          <div className="score-pane" style={{ display: tabPreviewOpen ? 'flex' : 'none' }}>
+            <ScorePane
+              pipelineResult={tabPipelineResult}
+              playbackState={state.playbackState}
+              onPlaybackStateChange={state.setPlaybackState}
+              colors={activeColors}
+            />
+          </div>
+        )}
         {state.sidebarTab && (
           <Sidebar
             tab={state.sidebarTab}
