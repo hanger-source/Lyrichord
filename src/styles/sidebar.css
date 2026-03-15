@@ -1,0 +1,156 @@
+/* ============================================
+   侧边栏内容：和弦库 + 节奏型 + 谱库
+   ============================================ */
+
+/* 和弦筛选 */
+.chord-filters { display: flex; flex-direction: column; gap: 8px; }
+.filter-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.filter-chips--source { border-top: 1px solid var(--border); padding-top: 6px; }
+.filter-chip {
+  background: var(--bg-surface); color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: 14px;
+  padding: 5px 16px; font-size: 13px; cursor: pointer;
+  transition: all var(--transition); white-space: nowrap; font-weight: 500;
+}
+.filter-chip:hover { color: var(--text-primary); border-color: var(--border-hover); background: var(--bg-elevated); }
+.filter-chip--active { color: #fff; border-color: var(--accent); background: var(--accent); font-weight: 600; }
+
+/* 根音导航 */
+.root-nav {
+  display: flex; gap: 3px; flex-wrap: wrap;
+  padding: 6px 8px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 2; background: var(--bg-base);
+}
+.root-nav-btn {
+  width: 38px; height: 30px; display: flex; align-items: center;
+  justify-content: center; font-size: 12px; font-weight: 600;
+  background: var(--bg-surface); color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: pointer; transition: all var(--transition);
+}
+.root-nav-btn:hover { border-color: var(--border-hover); color: var(--text-primary); background: var(--bg-elevated); }
+.root-nav-btn--active, .root-nav-btn--active:hover { color: #fff; border-color: var(--accent); background: var(--accent); }
+.root-nav-btn--empty { opacity: 0.25; cursor: not-allowed; }
+
+/* 和弦分组 */
+.chord-groups { display: flex; flex-direction: column; gap: 4px; }
+.chord-group { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--bg-base); }
+.chord-group-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: transparent;
+  border: none; color: var(--text-primary); cursor: pointer;
+  width: 100%; text-align: left; transition: background var(--transition);
+}
+.chord-group-header:hover { background: var(--bg-hover); }
+.chord-group-header--static {
+  cursor: default; position: sticky; top: 0; z-index: 1;
+  background: var(--bg-base); border-bottom: 1px solid var(--border);
+}
+.chord-group-key { font-size: 16px; font-weight: 700; color: var(--accent); min-width: 28px; }
+.chord-group-count {
+  font-size: 11px; color: var(--text-secondary);
+  background: var(--bg-elevated); padding: 2px 8px; border-radius: 10px; font-weight: 600;
+}
+.chord-group-arrow { margin-left: auto; font-size: 10px; color: var(--text-muted); }
+
+.chord-group-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; padding: 10px;
+  content-visibility: auto; contain-intrinsic-size: auto 200px;
+}
+.chord-card {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px;
+  display: flex; flex-direction: column; align-items: center;
+  transition: all var(--transition); cursor: default;
+  position: relative; overflow: hidden;
+}
+.chord-card:hover { border-color: var(--border-hover); box-shadow: var(--shadow-sm); }
+.chord-svg svg { display: block; max-width: 100%; height: auto; }
+.chord-variants-badge {
+  position: absolute; top: 3px; right: 5px;
+  font-size: 11px; color: #fff; background: var(--cyan);
+  padding: 2px 8px; border-radius: 8px; font-weight: 600;
+  border: 1px solid transparent; cursor: pointer; transition: all var(--transition);
+}
+.chord-variants-badge:hover { background: var(--accent); border-color: var(--accent-hover); }
+.chord-card--pickable { cursor: pointer; transition: all var(--transition); }
+.chord-card--pickable:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); transform: translateY(-1px); }
+.chord-card--highlight { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); animation: chord-highlight-pulse 1.5s ease-in-out 2; }
+@keyframes chord-highlight-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-dim); }
+  50% { box-shadow: 0 0 0 6px var(--accent-dim), 0 0 12px var(--accent-dim); }
+}
+
+/* 节奏型 */
+.rhythm-list { display: flex; flex-direction: column; gap: 8px; }
+.rhythm-card {
+  background: var(--bg-base); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: var(--space-md); cursor: pointer;
+  transition: all var(--transition);
+}
+.rhythm-card:hover { border-color: var(--border-hover); box-shadow: var(--shadow-sm); }
+.rhythm-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-sm); }
+.rhythm-header-right { display: flex; align-items: center; gap: 6px; }
+.rhythm-id { font-size: var(--font-base); font-weight: 600; color: var(--cyan); }
+.rhythm-slot-count { font-size: var(--font-sm); color: var(--text-secondary); }
+.rhythm-badge { font-size: 11px; padding: 3px 10px; border-radius: 10px; font-weight: 600; }
+.rhythm-badge--strum { background: var(--accent); color: #fff; }
+.rhythm-badge--pluck { background: var(--cyan); color: #fff; }
+
+.rhythm-visual { display: flex; align-items: stretch; gap: 2px; padding: var(--space-sm) 0; flex-wrap: wrap; }
+.rhythm-visual-group { display: flex; align-items: stretch; gap: 2px; }
+.rhythm-beat-divider { width: 1px; background: var(--border); margin: 2px 3px; align-self: stretch; }
+.rhythm-cell {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 1px;
+  min-width: 30px; height: 44px;
+  border-radius: var(--radius-sm); transition: all var(--transition); flex-shrink: 0;
+}
+.rhythm-cell-icon { font-size: 15px; line-height: 1; }
+.rhythm-cell-label { font-size: 10px; font-weight: 600; opacity: 0.8; }
+.rhythm-cell--down { background: var(--accent-dim); color: var(--accent); }
+.rhythm-cell--up { background: var(--green-dim); color: var(--green); }
+.rhythm-cell--mute { background: var(--red-dim); color: var(--red); }
+.rhythm-cell--sustain { background: var(--bg-elevated); color: var(--text-muted); }
+.rhythm-cell--pluck-action { background: var(--cyan-dim); color: var(--cyan); }
+
+.rhythm-detail { margin-top: var(--space-sm); padding-top: var(--space-sm); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--space-xs); }
+.rhythm-detail-label { font-size: var(--font-xs); color: var(--text-muted); font-weight: 500; }
+.rhythm-raw {
+  display: block; font-size: var(--font-xs); color: var(--text-muted);
+  word-break: break-all; font-family: var(--font-mono);
+  background: var(--bg-input); padding: 6px 8px; border-radius: var(--radius-sm);
+}
+.rhythm-speed { font-size: var(--font-xs); color: var(--orange); }
+
+/* 谱库列表 */
+.score-list { display: flex; flex-direction: column; gap: 4px; }
+.score-item {
+  background: var(--bg-base); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; transition: all var(--transition);
+}
+.score-item:hover { border-color: var(--border-hover); }
+.score-item--active { border-color: var(--accent); background: var(--accent-dim); }
+.score-item-main { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; cursor: pointer; }
+.score-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.score-artist { font-size: 12px; color: var(--text-secondary); }
+.score-item-actions { display: flex; gap: 2px; padding: 0 8px 8px; align-items: center; }
+
+.version-list { border-top: 1px solid var(--border); padding: 6px 10px 8px; }
+.version-item {
+  display: flex; flex-wrap: wrap; gap: 4px 8px;
+  padding: 6px 8px; border-radius: var(--radius-sm);
+  cursor: pointer; transition: background var(--transition); font-size: 12px;
+}
+.version-item:hover { background: var(--bg-hover); }
+.version-num { color: var(--cyan); font-weight: 600; }
+.version-meta { color: var(--text-muted); }
+.version-date { color: var(--text-muted); }
+.version-desc { color: var(--text-secondary); width: 100%; }
+
+/* Radix ScrollArea */
+.sidebar-scroll-root { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.sidebar-scroll-viewport { width: 100%; height: 100%; display: flex; flex-direction: column; }
+.sidebar-scrollbar { display: flex; user-select: none; touch-action: none; padding: 2px; width: 8px; }
+.sidebar-scrollbar-thumb { flex: 1; background: var(--border); border-radius: 4px; position: relative; transition: background var(--transition); }
+.sidebar-scrollbar-thumb:hover { background: var(--border-hover); }

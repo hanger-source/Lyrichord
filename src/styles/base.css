@@ -1,0 +1,147 @@
+/* ============================================
+   Lyrichord — 基础变量、Reset、根布局
+   ============================================ */
+
+@font-face {
+  font-display: block;
+  font-family: 'alphaTab';
+  src: url('/font/Bravura.woff2') format('woff2'),
+       url('/font/Bravura.woff') format('woff'),
+       url('/font/Bravura.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+:root {
+  --bg-base: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f1f5f9;
+  --bg-input: #ffffff;
+  --bg-hover: rgba(15,23,42,0.04);
+  --border: #e2e8f0;
+  --border-hover: #cbd5e1;
+  --accent: #0d9488;
+  --accent-dim: rgba(13,148,136,0.10);
+  --accent-hover: #0f766e;
+  --accent-glow: rgba(13,148,136,0.16);
+  --accent-text: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --green: #16a34a;
+  --green-dim: rgba(22,163,74,0.10);
+  --orange: #d97706;
+  --orange-dim: rgba(217,119,6,0.10);
+  --red: #dc2626;
+  --red-dim: rgba(220,38,38,0.08);
+  --cyan: #0891b2;
+  --cyan-dim: rgba(8,145,178,0.10);
+  --cursor-bar: rgba(13,148,136,0.08);
+  --cursor-beat: rgba(13,148,136,0.50);
+  --cursor-highlight: #0d9488;
+  --chord-bg: #ffffff;
+  --chord-grid: #94a3b8;
+  --chord-nut: #334155;
+  --chord-text: #334155;
+  --chord-mute: #dc2626;
+  --chord-finger1: #0891b2;
+  --chord-finger2: #16a34a;
+  --chord-finger3: #d97706;
+  --chord-finger4: #e11d48;
+  --chord-dot-default: #334155;
+  --beat-group-a: rgba(59, 130, 246, 0.06);
+  --beat-group-b: rgba(245, 158, 11, 0.06);
+  --beat-sel-bg: rgba(59, 130, 246, 0.18);
+  --beat-group-border: rgba(0, 0, 0, 0.10);
+  --split-color: rgba(139, 92, 246, 0.50);
+  --split-bg: rgba(139, 92, 246, 0.12);
+  --split-bg-alt: rgba(139, 92, 246, 0.08);
+  --split-dash: rgba(139, 92, 246, 0.30);
+  --merge-color: rgba(16, 185, 129, 0.50);
+  --merge-bg: rgba(16, 185, 129, 0.12);
+  --merge-bg-alt: rgba(16, 185, 129, 0.08);
+  --merge-bar: rgba(16, 185, 129, 0.40);
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.07);
+  --transition: 0.15s ease;
+  --font-base: 15px;
+  --font-sm: 13px;
+  --font-xs: 12px;
+  --font-lg: 17px;
+  --font-xl: 20px;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --header-height: 56px;
+  --toolbar-height: 46px;
+  --sidebar-width: 360px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  font-size: var(--font-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-root { display: flex; flex-direction: column; height: 100vh; }
+
+.app-error {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; height: 100vh; gap: 16px; color: var(--text-secondary);
+}
+.app-error h2 { color: var(--red); font-size: 18px; font-weight: 600; }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+
+/* 通用动画 */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+
+/* 通用按钮 */
+.btn-save {
+  background: var(--accent); color: #fff; border: none;
+  padding: 7px 18px; border-radius: var(--radius-sm); cursor: pointer;
+  font-size: var(--font-sm); font-weight: 500; transition: all var(--transition);
+  white-space: nowrap; display: flex; align-items: center; gap: 5px;
+  box-shadow: 0 1px 4px var(--accent-glow);
+}
+.btn-save:hover { background: var(--accent-hover); box-shadow: 0 2px 8px var(--accent-glow); }
+.btn-save:disabled { opacity: 0.35; cursor: not-allowed; box-shadow: none; }
+
+.btn-tiny {
+  background: transparent; color: var(--text-muted);
+  border: none; padding: 4px 7px; border-radius: var(--radius-sm);
+  cursor: pointer; font-size: 12px; transition: all var(--transition);
+  display: flex; align-items: center; justify-content: center;
+}
+.btn-tiny:hover { color: var(--text-primary); background: var(--bg-hover); }
+.btn-tiny--danger:hover { color: var(--red); }
+
+.btn-player {
+  background: var(--bg-surface); color: var(--text-primary);
+  border: 1px solid var(--border); padding: 6px 12px;
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: all var(--transition);
+  display: flex; align-items: center; justify-content: center;
+}
+.btn-player:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+.btn-player:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-player:disabled:hover { border-color: var(--border); background: var(--bg-surface); color: var(--text-primary); }
+.btn-player--active { border-color: var(--accent); color: #fff; background: var(--accent); }

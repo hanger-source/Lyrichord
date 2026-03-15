@@ -223,10 +223,21 @@ export function TabEditor({
   const [containerW, setContainerW] = useState(900);
   const gridRef = useRef<HTMLDivElement>(null);
 
+  const containerWRef = useRef(900);
+  const rafRef = useRef(0);
   useLayoutEffect(() => {
     const el = gridRef.current; if (!el) return;
-    const ro = new ResizeObserver(entries => { for (const e of entries) setContainerW(e.contentRect.width); });
-    ro.observe(el); return () => ro.disconnect();
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) {
+        const w = Math.round(e.contentRect.width);
+        if (Math.abs(w - containerWRef.current) < 4) return; // 忽略微小变化
+        containerWRef.current = w;
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(() => setContainerW(w));
+      }
+    });
+    ro.observe(el);
+    return () => { ro.disconnect(); cancelAnimationFrame(rafRef.current); };
   }, []);
 
   const addMeasure = useCallback(() => updateMeasures(prev => [...prev, mkMeasure(bpm)]), [bpm, updateMeasures]);
