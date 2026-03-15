@@ -16,7 +16,14 @@
 .tab-save-btn { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .tab-save-btn:hover:not(:disabled) { background: var(--accent-dim); }
 
-.tab-seg-msg { font-size: 12px; color: var(--green); animation: fadeIn 0.2s ease; }
+.tab-seg-msg {
+  font-size: 12px;
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  padding: 2px 8px;
+  border-radius: 4px;
+  animation: saveFlash 0.4s ease, saveFadeOut 0.4s ease 2s forwards;
+}
 
 /* 段落列表面板（旧版，保留兼容） */
 .tab-segment-list {

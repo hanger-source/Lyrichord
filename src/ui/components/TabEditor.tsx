@@ -4,7 +4,7 @@
  * 职责：六线谱网格编辑，段落管理由 TabWorkspace 处理。
  * 子组件：TabToolbar（工具栏）、TabMeasureView（小节渲染）
  */
-import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, forwardRef, useImperativeHandle } from 'react';
 import * as Collapsible from '@radix-ui/react-collapsible';
 import { resolveChord } from '../../core/chord/resolver';
 import { parseTmdToMeasures } from '../../core/tmd-to-measures';
@@ -24,6 +24,8 @@ export interface ChordRegion {
   fromBeat: number;
   toBeat: number;
   name: string;
+  /** 指法变体索引（对应 ChordDefinition.positions[idx]） */
+  positionIndex?: number;
 }
 
 export interface TabBeat {
@@ -69,21 +71,30 @@ export function mkMeasure(bpm: number): TabMeasure {
   return { beats, chords: [] };
 }
 
-function chordAt(measures: TabMeasure[], mi: number, bi: number): string | null {
+function chordAt(measures: TabMeasure[], mi: number, bi: number): ChordRegion | null {
   const mc = measures[mi].chords;
   for (let i = mc.length - 1; i >= 0; i--) {
-    if (mc[i].fromBeat <= bi && bi < mc[i].toBeat) return mc[i].name;
+    if (mc[i].fromBeat <= bi && bi < mc[i].toBeat) return mc[i];
   }
   for (let m = mi - 1; m >= 0; m--) {
     const prev = measures[m].chords;
-    if (prev.length > 0) return prev[prev.length - 1].name;
+    if (prev.length > 0) return prev[prev.length - 1];
   }
   return null;
 }
 
-function chordFretForString(name: string, si: number): number {
+function chordFretForString(name: string, si: number, positionIndex?: number): number {
   const def = resolveChord(name);
   if (!def) return 0;
+  // positions 里的 frets 是相对品位，需要转为绝对品位
+  // def.frets 已经是绝对品位（positions[0] 转换过的）
+  const idx = positionIndex ?? 0;
+  const pos = def.positions?.[idx];
+  if (pos) {
+    const relFret = pos.frets[5 - si];
+    if (relFret <= 0) return relFret; // 0=空弦, -1=不弹
+    return relFret + pos.baseFret - 1; // 转绝对品位
+  }
   return def.frets[5 - si];
 }
 
@@ -100,13 +111,13 @@ function mToTex(m: TabMeasure, measures: TabMeasure[], mi: number): string {
   const parts: string[] = [];
   for (let bi = 0; bi < m.beats.length; bi++) {
     const beat = m.beats[bi];
-    const ch = chordAt(measures, mi, bi);
+    const region = chordAt(measures, mi, bi);
     const dur = weightToDur(beat.weight);
     const notes: { fret: number; str: number }[] = [];
     for (let si = 0; si < STRING_COUNT; si++) {
       const mk = beat.strings[si];
-      if (mk.type === 'chord' && ch) {
-        const f = chordFretForString(ch, si);
+      if (mk.type === 'chord' && region) {
+        const f = chordFretForString(region.name, si, region.positionIndex);
         if (f >= 0) notes.push({ fret: f, str: si + 1 });
       } else if (mk.type === 'custom') {
         notes.push({ fret: mk.fret, str: si + 1 });
@@ -128,40 +139,90 @@ function mToChordLine(m: TabMeasure): string {
   return `| ${[...groups.values()].map(v => v ?? '.').join(' ')} |`;
 }
 
-function genTmd(measures: TabMeasure[], opts?: { bpm?: number; tsLabel?: string; sectionName?: string }): string {
-  const tempo = opts?.bpm ?? 72;
-  const ts = opts?.tsLabel ?? '4/4';
-  const section = opts?.sectionName?.trim() || 'Untitled';
-
-  // 收集用到的和弦，检查是否有自定义 define 需要写入 header
-  const usedChords = new Set<string>();
+/**
+ * 生成单个段落的 TMD body（不含 header）
+ * 返回 [SectionName] + 小节内容，以及用到的和弦名集合
+ */
+export function genSectionBody(
+  measures: TabMeasure[],
+  sectionName?: string,
+): { body: string; usedChords: ChordRegion[] } {
+  const section = sectionName?.trim() || 'Untitled';
+  const usedChords: ChordRegion[] = [];
+  const seen = new Set<string>();
   for (const m of measures) {
-    for (const c of m.chords) usedChords.add(c.name);
-  }
-  const chordDefs: string[] = [];
-  for (const name of usedChords) {
-    const def = resolveChord(name);
-    if (def?.positions?.[0]) {
-      const pos = def.positions[0];
-      const frets = pos.frets.map(f => f < 0 ? 'x' : String(f)).join(' ');
-      chordDefs.push(`define [${name}]: { frets: "${frets}" }`);
+    for (const c of m.chords) {
+      if (!seen.has(c.name)) {
+        seen.add(c.name);
+        usedChords.push(c);
+      }
     }
   }
 
-  const header = [
-    '---',
-    `tempo: ${tempo}`,
-    `time_signature: ${ts}`,
-    ...(chordDefs.length > 0 ? ['', ...chordDefs] : []),
-    '---',
-  ].join('\n');
-
-  const body = measures
+  const lines = measures
     .map((m, i) => hasContent(m) ? `${mToChordLine(m)}\ntex: ${mToTex(m, measures, i)}` : null)
     .filter(Boolean).join('\n\n');
 
+  if (!lines) return { body: '', usedChords };
+  return { body: `[${section}]\n\n${lines}`, usedChords };
+}
+
+/**
+ * 生成和弦 define 行
+ */
+/**
+ * 从使用的和弦区间生成 TMD define 行
+ * 每个和弦取实际使用的 positionIndex 对应的指法
+ */
+export function genChordDefs(chordRegions: Iterable<ChordRegion>): string[] {
+  const defs: string[] = [];
+  const seen = new Set<string>();
+  for (const region of chordRegions) {
+    if (seen.has(region.name)) continue;
+    seen.add(region.name);
+    const def = resolveChord(region.name);
+    if (!def) continue;
+    const posIdx = region.positionIndex ?? 0;
+    const pos = def.positions?.[posIdx] ?? def.positions?.[0];
+    const frets = pos
+      ? pos.frets.map(f => {
+          if (f < 0) return 'x';
+          if (f === 0) return '0';
+          return String(f + pos.baseFret - 1); // 转绝对品位
+        }).join(' ')
+      : def.frets.map(f => f < 0 ? 'x' : String(f)).join(' ');
+    defs.push(`define [${region.name}]: { frets: "${frets}" }`);
+  }
+  return defs;
+}
+
+/**
+ * 生成 TMD header
+ */
+export function genTmdHeader(tempo: number, tsLabel: string, chordDefs: string[]): string {
+  return [
+    '---',
+    `tempo: ${tempo}`,
+    `time_signature: ${tsLabel}`,
+    ...(chordDefs.length > 0 ? ['', ...chordDefs] : []),
+    '---',
+  ].join('\n');
+}
+
+/**
+ * 生成单段落完整 TMD（header + [Section] + body）
+ * 用于单段落预览
+ */
+function genTmd(measures: TabMeasure[], opts?: { bpm?: number; tsLabel?: string; sectionName?: string }): string {
+  const tempo = opts?.bpm ?? 72;
+  const ts = opts?.tsLabel ?? '4/4';
+
+  const { body, usedChords } = genSectionBody(measures, opts?.sectionName);
   if (!body) return '';
-  return `${header}\n\n[${section}]\n\n${body}\n`;
+
+  const chordDefs = genChordDefs(usedChords);
+  const header = genTmdHeader(tempo, ts, chordDefs);
+  return `${header}\n\n${body}\n`;
 }
 
 function splitRows(measures: TabMeasure[], cw: number): number[][] {
@@ -189,26 +250,64 @@ interface TabEditorProps {
   saveMsg?: string | null;
   onTmdChange?: (tmd: string) => void;
   onChordSelectionStart?: (sel: ChordSelectionPending) => void;
-  chordToApply?: string | null;
+  chordToApply?: { name: string; positionIndex: number } | null;
   onChordApplied?: () => void;
-  onChordClick?: (chordName: string) => void;
+  onChordClick?: (chordName: string, positionIndex?: number) => void;
   previewOpen?: boolean;
   onTogglePreview?: () => void;
 }
 
-export function TabEditor({
+export interface TabEditorHandle {
+  /** 外部触发保存（如 Ctrl+S） */
+  triggerSave: () => void;
+  /** 更新所有同名和弦的 positionIndex */
+  updateChordPosition: (chordName: string, positionIndex: number) => void;
+}
+
+export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function TabEditor({
   initialMeasures, initialTempo = 72, initialBpm = 8, initialTsLabel = '4/4',
   segmentName = '', onSegmentNameChange,
   onSave, saving, saveMsg,
   onTmdChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
   previewOpen, onTogglePreview,
-}: TabEditorProps) {
+}: TabEditorProps, ref) {
   const [tempo, setTempo] = useState(initialTempo);
   const [bpm, setBpm] = useState(initialBpm);
   const [tsLabel, setTsLabel] = useState(initialTsLabel);
   const [measures, setMeasures] = useState<TabMeasure[]>(() =>
     initialMeasures ?? Array.from({ length: 4 }, () => mkMeasure(initialBpm))
   );
+
+  // 暴露 triggerSave 给外部（Ctrl+S）
+  const measuresRef = useRef(measures);
+  measuresRef.current = measures;
+  const tempoRef = useRef(initialTempo);
+  const bpmRef = useRef(initialBpm);
+  const tsLabelRef = useRef(initialTsLabel);
+
+  useImperativeHandle(ref, () => ({
+    triggerSave() {
+      onSave?.(measuresRef.current, tempoRef.current, bpmRef.current, tsLabelRef.current);
+    },
+    updateChordPosition(chordName: string, positionIndex: number) {
+      setMeasures(prev => {
+        let anyChanged = false;
+        const next = prev.map(m => {
+          let mChanged = false;
+          const newChords = m.chords.map(c => {
+            if (c.name === chordName && c.positionIndex !== positionIndex) {
+              mChanged = true;
+              return { ...c, positionIndex };
+            }
+            return c;
+          });
+          if (mChanged) { anyChanged = true; return { ...m, chords: newChords }; }
+          return m;
+        });
+        return anyChanged ? next : prev;
+      });
+    },
+  }), [onSave]);
 
   // ---- Undo / Redo ----
   const undoStack = useRef<string[]>([]);
@@ -251,6 +350,8 @@ export function TabEditor({
   const [focusedCell, setFocusedCell] = useState<{ mi: number; bi: number; si: number } | null>(null);
   const [beatSel, setBeatSel] = useState<{ mi: number; from: number; to: number } | null>(null);
   const [beatDrag, setBeatDrag] = useState<{ mi: number; start: number; end: number } | null>(null);
+  /** 当前选中的和弦区间（mi + fromBeat 唯一标识） */
+  const [activeChord, setActiveChord] = useState<{ mi: number; fromBeat: number } | null>(null);
   const [containerW, setContainerW] = useState(900);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -274,14 +375,14 @@ export function TabEditor({
   const addMeasure = useCallback(() => updateMeasures(prev => [...prev, mkMeasure(bpm)]), [bpm, updateMeasures]);
   const removeLastMeasure = useCallback(() => updateMeasures(prev => prev.length <= 1 ? prev : prev.slice(0, -1)), [updateMeasures]);
 
-  // 和弦填入
+  // 和弦填入：chordToApply + pendingSel 同时存在时填入
   useEffect(() => {
     if (chordToApply && pendingSel) {
       const { measureIdx: mi, fromBeat, toBeat } = pendingSel;
       updateMeasures(prev => {
         const next = structuredClone(prev);
         next[mi].chords = next[mi].chords.filter(c => c.toBeat <= fromBeat || c.fromBeat >= toBeat);
-        next[mi].chords.push({ fromBeat, toBeat, name: chordToApply });
+        next[mi].chords.push({ fromBeat, toBeat, name: chordToApply.name, positionIndex: chordToApply.positionIndex });
         next[mi].chords.sort((a, b) => a.fromBeat - b.fromBeat);
         return next;
       });
@@ -289,6 +390,18 @@ export function TabEditor({
       onChordApplied?.();
     }
   }, [chordToApply, pendingSel, onChordApplied, updateMeasures]);
+
+  // Escape 取消 pendingSel 和 chordToApply
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (pendingSel) { setPendingSel(null); }
+        if (chordToApply) { onChordApplied?.(); }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [pendingSel, chordToApply, onChordApplied]);
 
   const rows = useMemo(() => splitRows(measures, containerW), [measures, containerW]);
   const tmdText = useMemo(() => genTmd(measures, { bpm: tempo, tsLabel, sectionName: segmentName }), [measures, tempo, tsLabel, segmentName]);
@@ -431,6 +544,7 @@ export function TabEditor({
 
   const handleTsChange = useCallback((label: string, b: number) => {
     setTsLabel(label); setBpm(b); setMeasures([mkMeasure(b)]); setBeatSel(null);
+    tsLabelRef.current = label; bpmRef.current = b;
   }, []);
 
   const cellDisplay = (mi: number, bi: number, si: number): string => {
@@ -459,8 +573,11 @@ export function TabEditor({
         onToggleRest={toggleRestForSel}
         onCancelBeatSel={() => setBeatSel(null)}
         hasPendingSel={!!pendingSel}
+        hasChordToApply={!!chordToApply}
+        chordToApplyName={chordToApply?.name}
+        onCancelChord={() => { setPendingSel(null); onChordApplied?.(); }}
         tempo={tempo}
-        onTempoChange={setTempo}
+        onTempoChange={v => { setTempo(v); tempoRef.current = v; }}
         tsLabel={tsLabel}
         onTsChange={handleTsChange}
         timeSigs={TIME_SIGS}
@@ -493,7 +610,8 @@ export function TabEditor({
                 isPendingHL={bi => isPendingHL(mi, bi)}
                 onChordMouseDown={bi => handleChordMouseDown(mi, bi)}
                 onChordMouseEnter={bi => handleChordMouseEnter(mi, bi)}
-                onChordClick={name => onChordClick?.(name)}
+                onChordClick={(name, posIdx, fromBeat) => { setActiveChord({ mi, fromBeat: fromBeat ?? 0 }); setPendingSel(null); onChordApplied?.(); onChordClick?.(name, posIdx); }}
+                activeChord={activeChord?.mi === mi ? activeChord : null}
                 onChordRemove={bi => removeChordAt(mi, bi)}
                 onPendingSelClear={() => setPendingSel(null)}
                 focusedCell={focusedCell}
@@ -527,4 +645,4 @@ export function TabEditor({
       </Collapsible.Root>
     </div>
   );
-}
+});

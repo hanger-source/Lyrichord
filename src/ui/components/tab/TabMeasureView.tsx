@@ -57,13 +57,15 @@ interface TabMeasureViewProps {
   isPendingHL: (bi: number) => boolean;
   onChordMouseDown: (bi: number) => void;
   onChordMouseEnter: (bi: number) => void;
-  onChordClick: (chordName: string) => void;
+  onChordClick: (chordName: string, positionIndex?: number, fromBeat?: number) => void;
   onChordRemove: (bi: number) => void;
   onPendingSelClear: () => void;
   // 弦线
   focusedCell: { mi: number; bi: number; si: number } | null;
   onStringClick: (bi: number, si: number) => void;
   cellDisplay: (bi: number, si: number) => string;
+  // 和弦选中高亮
+  activeChord: { mi: number; fromBeat: number } | null;
 }
 
 export function TabMeasureView({
@@ -72,6 +74,7 @@ export function TabMeasureView({
   isDragHL, isPendingHL, onChordMouseDown, onChordMouseEnter,
   onChordClick, onChordRemove, onPendingSelClear,
   focusedCell, onStringClick, cellDisplay,
+  activeChord,
 }: TabMeasureViewProps) {
   return (
     <div className="tab-measure-wrap">
@@ -102,15 +105,18 @@ export function TabMeasureView({
         </div>
         {/* 和弦区间行 */}
         <div className="tab-chord-row" style={{ width: m.beats.reduce((s, b) => s + beatWidth(b), 0) }}>
-          {m.chords.map((c, ci) => (
-            <div key={ci} className="tab-chord-region"
+          {m.chords.map((c, ci) => {
+            const isActive = activeChord?.mi === mi && activeChord?.fromBeat === c.fromBeat;
+            return (
+            <div key={ci} className={`tab-chord-region ${isActive ? 'tab-chord-region--active' : ''}`}
               style={{ left: beatX(m, c.fromBeat), width: beatX(m, c.toBeat) - beatX(m, c.fromBeat) }}
-              onClick={e => { e.stopPropagation(); onPendingSelClear(); onChordClick(c.name); }}
+              onClick={e => { e.stopPropagation(); onPendingSelClear(); onChordClick(c.name, c.positionIndex, c.fromBeat); }}
               onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
               onContextMenu={e => { e.preventDefault(); onChordRemove(c.fromBeat); }}>
               <span className="tab-chord-region-name">{c.name}</span>
             </div>
-          ))}
+            );
+          })}
           {m.beats.map((b, bi) => (
             <div key={bi}
               className={`tab-chord-drag-cell ${isDragHL(bi) ? 'dragging' : ''} ${isPendingHL(bi) ? 'pending' : ''}`}

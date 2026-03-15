@@ -9,10 +9,13 @@
  *   - 切换项目 → 两个模式同时切换上下文
  */
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { tmdToAlphaTex, type PipelineResult } from '../../core/pipeline';
+import { tmdToAlphaTex, expandSegmentRefs, type PipelineResult } from '../../core/pipeline';
 import { saveScore, deleteScore, getVersionById, getLatestVersion, getAllScores, type ScoreRecord } from '../../db/score-repo';
-import { bulkUpsertRhythms } from '../../db/rhythm-repo';
-import { upsertChord } from '../../db/chord-repo';
+import { getAllSegments, type SegmentRecord } from '../../db/segment-repo';
+import { genSectionBody } from '../components/TabEditor';
+import type { TabMeasure } from '../components/TabEditor';
+import { bulkUpsertRhythms, getAllRhythms } from '../../db/rhythm-repo';
+import { upsertChord, getAllChords } from '../../db/chord-repo';
 import { getDb, persist } from '../../db/connection';
 import { initDatabase } from '../../db/init';
 
@@ -50,6 +53,28 @@ export function useAppState(initialTmd: string) {
   const [activeProjectTitle, setActiveProjectTitle] = useState(savedProject.current.title);
   const [projects, setProjects] = useState<ScoreRecord[]>([]);
 
+  // 段落缓存 — 用于 @segment(Name) 引用展开
+  const segmentCacheRef = useRef<SegmentRecord[]>([]);
+  const [segmentNames, setSegmentNames] = useState<string[]>([]);
+  const refreshSegmentCache = useCallback(async () => {
+    try {
+      const segs = await getAllSegments();
+      segmentCacheRef.current = segs;
+      setSegmentNames(segs.map(s => s.name));
+    } catch {}
+  }, []);
+
+  // 和弦名 + 节奏型 ID 缓存 — 用于 TMD 编辑器智能提示
+  const [chordNames, setChordNames] = useState<string[]>([]);
+  const [rhythmIds, setRhythmIds] = useState<string[]>([]);
+  const refreshCompletionData = useCallback(async () => {
+    try {
+      const [chords, rhythms] = await Promise.all([getAllChords(), getAllRhythms()]);
+      setChordNames(chords.map(c => c.id));
+      setRhythmIds(rhythms.map(r => r.id));
+    } catch {}
+  }, []);
+
   const [currentScoreId, setCurrentScoreId] = useState<string | null>(savedProject.current.id);
   const [currentVersionId, setCurrentVersionId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -84,8 +109,12 @@ export function useAppState(initialTmd: string) {
   }, []);
 
   useEffect(() => {
-    if (dbReady) refreshProjects();
-  }, [dbReady, refreshProjects]);
+    if (dbReady) {
+      refreshProjects();
+      refreshSegmentCache();
+      refreshCompletionData();
+    }
+  }, [dbReady, refreshProjects, refreshSegmentCache, refreshCompletionData]);
 
   // 持久化项目选择
   useEffect(() => {
@@ -93,25 +122,39 @@ export function useAppState(initialTmd: string) {
   }, [activeProjectId, activeProjectTitle]);
 
   const runPipeline = useCallback((source: string) => {
-    const result = tmdToAlphaTex(source);
+    // 展开 @segment(Name) 引用
+    const expanded = expandSegmentRefs(source, (name) => {
+      const seg = segmentCacheRef.current.find(s => s.name === name);
+      if (!seg) return null;
+      try {
+        const measures = JSON.parse(seg.measuresJson) as TabMeasure[];
+        const { body } = genSectionBody(measures, seg.name);
+        return body || null;
+      } catch { return null; }
+    });
+
+    const result = tmdToAlphaTex(expanded);
     setPipelineResult(result);
 
-    // 异步同步节奏型和自定义和弦到 DB
+    // 异步同步节奏型和自定义和弦到 DB，完成后刷新补全候选
     if (result.song) {
+      const syncTasks: Promise<unknown>[] = [];
       const rhythms = Array.from(result.song.rhythmLibrary.values());
       if (rhythms.length > 0) {
-        bulkUpsertRhythms(rhythms, 'score').catch(console.error);
+        syncTasks.push(bulkUpsertRhythms(rhythms, 'score'));
       }
-      // 同步用户自定义和弦
       const customChords = Array.from(result.song.chordLibrary.values());
       if (customChords.length > 0) {
-        Promise.all(
-          customChords.map(c => upsertChord(c, 'user'))
-        ).catch(console.error);
+        syncTasks.push(Promise.all(customChords.map(c => upsertChord(c, 'user'))));
+      }
+      if (syncTasks.length > 0) {
+        Promise.all(syncTasks)
+          .then(() => refreshCompletionData())
+          .catch(console.error);
       }
     }
     return result;
-  }, []);
+  }, [refreshCompletionData]);
 
   // 首次渲染
   useEffect(() => {
@@ -132,6 +175,16 @@ export function useAppState(initialTmd: string) {
   // 保存 — 关联到当前项目
   const handleSave = useCallback(async () => {
     if (!pipelineResult?.song) return;
+    // 内容没变就不创建新版本
+    if (activeProjectId) {
+      try {
+        const latest = await getLatestVersion(activeProjectId);
+        if (latest && latest.tmdSource === tmdSource) {
+          showSaveMessage('无变更');
+          return;
+        }
+      } catch {}
+    }
     setIsSaving(true);
     try {
       const result = await saveScore({
@@ -315,6 +368,10 @@ export function useAppState(initialTmd: string) {
     setCurrentScoreId,
     setCurrentVersionId,
     runPipeline,
+    refreshSegmentCache,
+    segmentNames,
+    chordNames,
+    rhythmIds,
     handleSave,
     handleDeleteScore,
     loadVersion,

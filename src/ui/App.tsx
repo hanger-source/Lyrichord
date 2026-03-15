@@ -4,13 +4,14 @@
  * 布局: Header + [Editor(左) | Score(中) | Sidebar(右)]
  * 编辑器和侧边栏可折叠，曲谱始终占主区域。
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useAppState } from './hooks/useAppState';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { EditorPane } from './components/EditorPane';
 import { ScorePane } from './components/ScorePane';
 import { TabWorkspace } from './components/TabWorkspace';
+import type { TabWorkspaceHandle } from './components/TabWorkspace';
 import type { ChordSelectionPending } from './components/TabEditor';
 import { applyTheme, lightColors, darkColors, layout } from './theme';
 import type { ColorTokens } from './theme';
@@ -32,12 +33,13 @@ export function App() {
     setEditorMode(mode);
     try { localStorage.setItem('lyrichord-editor-mode', mode); } catch {}
   }, []);
+  const tabWorkspaceRef = useRef<TabWorkspaceHandle>(null);
   const [activeColors, setActiveColors] = useState<ColorTokens>(lightColors);
   // TAB 模式曲谱预览开关
   const [tabPreviewOpen, setTabPreviewOpen] = useState(true);
   // TAB ↔ 和弦库联动
-  const [chordToApply, setChordToApply] = useState<string | null>(null);
-  const [highlightChord, setHighlightChord] = useState<string | null>(null);
+  const [chordToApply, setChordToApply] = useState<{ name: string; positionIndex: number } | null>(null);
+  const [highlightChord, setHighlightChord] = useState<{ name: string; positionIndex?: number } | null>(null);
   // TAB 编辑器独立的 TMD 输出 + pipeline 结果
   const [tabPipelineResult, setTabPipelineResult] = useState<PipelineResult | null>(null);
 
@@ -66,18 +68,24 @@ export function App() {
   }, [state.sidebarTab, state.setSidebarTab]);
 
   // 侧边栏和弦库选中和弦
-  const handleChordPicked = useCallback((chordName: string) => {
-    setChordToApply(chordName);
+  // chordToApply 暂存：如果当前没有 pendingSel，先暂存和弦，等用户拖选后自动填入
+  const handleChordPicked = useCallback((chordName: string, positionIndex: number) => {
+    setChordToApply({ name: chordName, positionIndex });
   }, []);
 
   // TAB 编辑器点击和弦 → 高亮侧边栏对应卡片
-  const handleChordClick = useCallback((chordName: string) => {
+  const handleChordClick = useCallback((chordName: string, positionIndex?: number) => {
     if (state.sidebarTab !== 'chords') state.setSidebarTab('chords');
-    setHighlightChord(chordName);
+    setHighlightChord({ name: chordName, positionIndex });
   }, [state.sidebarTab, state.setSidebarTab]);
 
   const handleChordApplied = useCallback(() => {
     setChordToApply(null);
+  }, []);
+
+  // Sidebar 切换指法变体 → 更新 TAB 里同名和弦的 positionIndex
+  const handleChordPositionChange = useCallback((chordName: string, positionIndex: number) => {
+    tabWorkspaceRef.current?.updateChordPosition(chordName, positionIndex);
   }, []);
 
   // 稳定引用 — 避免破坏 Sidebar/ScorePane 的 memo
@@ -89,6 +97,22 @@ export function App() {
   const handleHighlightClear = useCallback(() => {
     setHighlightChord(null);
   }, []);
+
+  // Ctrl+S / Cmd+S → 保存（拦截浏览器默认行为）
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        if (editorMode === 'tab') {
+          tabWorkspaceRef.current?.save();
+        } else {
+          state.handleSave();
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [editorMode, state.handleSave]);
 
   if (state.dbError) {
     return (
@@ -128,13 +152,21 @@ export function App() {
             onChange={state.setTmdSource}
             errors={state.pipelineResult?.errors ?? []}
             warnings={state.pipelineResult?.warnings ?? []}
+            completionData={{
+              chordNames: state.chordNames,
+              rhythmIds: state.rhythmIds,
+              segmentNames: state.segmentNames,
+            }}
+            saveMessage={state.saveMessage}
           />
         )}
         {!editorCollapsed && editorMode === 'tab' && (
           <div style={{ flex: '1 1 0', overflow: 'hidden', display: 'flex', minWidth: 0 }}>
             <TabWorkspace
+              ref={tabWorkspaceRef}
               projectId={state.activeProjectId}
               onTmdChange={handleTabTmdChange}
+              onSegmentSaved={state.refreshSegmentCache}
               onChordSelectionStart={handleChordSelectionStart}
               chordToApply={chordToApply}
               onChordApplied={handleChordApplied}
@@ -175,6 +207,7 @@ export function App() {
             onChordPick={editorMode === 'tab' ? handleChordPicked : undefined}
             highlightChord={highlightChord}
             onHighlightClear={handleHighlightClear}
+            onChordPositionChange={editorMode === 'tab' ? handleChordPositionChange : undefined}
           />
         </div>
       </div>

@@ -16,6 +16,27 @@ import { generate } from './generator/alphatex';
 import { setCustomChords, clearCustomChords } from './chord/resolver';
 import type { AlphaTexOutput, Song } from './types';
 
+/**
+ * 段落引用解析器类型
+ * 给定段落名，返回展开后的 TMD body（不含 header），或 null 表示找不到
+ */
+export type SegmentResolver = (name: string) => string | null;
+
+/**
+ * 展开 TMD 文本中的 @segment(Name) 引用
+ *
+ * 纯文本替换，在 pipeline 之前调用。
+ * resolver 由调用方提供（从 DB 读段落 → genSectionBody）。
+ * 展开后的文本可以直接传给 tmdToAlphaTex。
+ */
+export function expandSegmentRefs(source: string, resolver: SegmentResolver): string {
+  return source.replace(/^@segment\(([^)]+)\)$/gm, (_match, name: string) => {
+    const body = resolver(name.trim());
+    if (body) return body;
+    return `# [WARNING] 段落引用未找到: ${name.trim()}`;
+  });
+}
+
 export interface PipelineResult {
   success: boolean;
   output: AlphaTexOutput | null;

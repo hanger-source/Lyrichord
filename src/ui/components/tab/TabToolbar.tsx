@@ -26,6 +26,9 @@ interface TabToolbarProps {
   onCancelBeatSel: () => void;
   // 和弦提示
   hasPendingSel: boolean;
+  hasChordToApply: boolean;
+  chordToApplyName?: string;
+  onCancelChord?: () => void;
   // tempo
   tempo: number;
   onTempoChange: (t: number) => void;
@@ -47,6 +50,7 @@ export function TabToolbar({
   onUndo, onRedo,
   beatSelCount, onSplitBeat, onMergeBeats, onToggleRest, onCancelBeatSel,
   hasPendingSel,
+  hasChordToApply, chordToApplyName, onCancelChord,
   tempo, onTempoChange,
   tsLabel, onTsChange, timeSigs,
   measureCount, onAddMeasure, onRemoveMeasure,
@@ -125,10 +129,24 @@ export function TabToolbar({
         )}
       </div>
 
-      {/* 上下文栏 — 拍选中或和弦待填入时显示 */}
-      {(hasBeatSel || hasPendingSel) && (
+      {/* 上下文栏 — 和弦/拍选中状态提示 */}
+      {(hasBeatSel || hasPendingSel || hasChordToApply) && (
         <div className="tab-context-bar">
-          {hasPendingSel && <span className="tab-context-hint">← 从和弦库选择和弦填入</span>}
+          {hasChordToApply && !hasPendingSel && (
+            <>
+              <span className="tab-context-hint">已选 <strong>{chordToApplyName}</strong>，在和弦行拖选拍位以填入</span>
+              <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelChord}>取消 (Esc)</button>
+            </>
+          )}
+          {hasPendingSel && !hasChordToApply && (
+            <>
+              <span className="tab-context-hint">← 从和弦库选择和弦填入</span>
+              <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelChord}>取消 (Esc)</button>
+            </>
+          )}
+          {hasPendingSel && hasChordToApply && (
+            <span className="tab-context-hint">正在填入 <strong>{chordToApplyName}</strong>...</span>
+          )}
           {hasBeatSel && (
             <>
               <span className="tab-context-info">已选 {beatSelCount} 拍</span>

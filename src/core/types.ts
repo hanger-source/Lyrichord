@@ -506,7 +506,8 @@ export type TokenType =
   | 'CHORD_MARK'   // [C] 和弦位置标记 (歌词行/tex行)
   | 'CHORD_BEAT'   // v4: 小节行里的和弦名，占1拍
   | 'TEX_START'    // tex: 行开始标记
-  | 'W2_START';    // w2: 行开始标记
+  | 'W2_START'     // w2: 行开始标记
+  | 'SEGMENT_REF'; // @segment(Name) — 引用 TAB 段落，pipeline 展开时替换为实际 TMD body
 
 export interface Token {
   type: TokenType;
