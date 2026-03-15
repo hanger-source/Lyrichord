@@ -208,6 +208,8 @@ interface TabEditorProps {
   chordToApply?: string | null;
   onChordApplied?: () => void;
   onChordClick?: (chordName: string) => void;
+  previewOpen?: boolean;
+  onTogglePreview?: () => void;
 }
 
 const STORAGE_KEY = 'tab-editor-state';
@@ -222,7 +224,7 @@ function loadSaved(): { bpm: number; tsLabel: string; measures: TabMeasure[] } |
   return null;
 }
 
-export function TabEditor({ onTmdChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick }: TabEditorProps) {
+export function TabEditor({ onTmdChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick, previewOpen, onTogglePreview }: TabEditorProps) {
   const saved = useRef(loadSaved());
   const [bpm, setBpm] = useState(saved.current?.bpm ?? 8);
   const [tsLabel, setTsLabel] = useState(saved.current?.tsLabel ?? '4/4');
@@ -705,6 +707,11 @@ export function TabEditor({ onTmdChange, onChordSelectionStart, chordToApply, on
           <button className="tab-action-btn" onClick={removeLastMeasure} title="删除末尾小节" disabled={measures.length <= 1}>− 小节</button>
           <span className="tab-toolbar-count">{measures.length} 小节</span>
           <button className="tab-copy-btn" onClick={copyTmd}>复制 TMD</button>
+          {onTogglePreview && (
+            <button className="tab-action-btn" onClick={onTogglePreview}>
+              {previewOpen ? '关闭预览' : '曲谱预览'}
+            </button>
+          )}
         </div>
       </div>
 
