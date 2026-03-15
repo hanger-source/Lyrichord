@@ -16,6 +16,8 @@ interface ScorePaneProps {
   playbackState: PlaybackState;
   onPlaybackStateChange: (state: PlaybackState) => void;
   colors: ColorTokens;
+  /** 父组件告知当前是否可见，从 false→true 时触发重新渲染 */
+  visible?: boolean;
 }
 
 function formatTime(ms: number): string {
@@ -25,7 +27,7 @@ function formatTime(ms: number): string {
   return `${min}:${sec.toString().padStart(2, '0')}`;
 }
 
-export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange, colors }: ScorePaneProps) {
+export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange, colors, visible = true }: ScorePaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<alphaTab.AlphaTabApi | null>(null);
   const lastTexRef = useRef('');
@@ -49,7 +51,7 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
         useWorkers: true,
       },
       display: {
-        staveProfile: 'tabmixed',
+        staveProfile: 'tab',
         layoutMode: 'page',
         scale: 1.0,
         padding: [60, 40],
@@ -59,12 +61,15 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
         effectBandPaddingBottom: 6,
       },
       notation: {
+        rhythmMode: 'ShowWithBars',
+        rhythmHeight: 20,
         elements: {
           effectLyrics: true,
           effectChordNames: true,
           effectMarker: true,
           effectTempo: true,
           effectCapo: false,
+          effectDynamics: false,
         } as any,
       },
       player: {
@@ -111,7 +116,18 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
 
     initChordTooltip(containerRef.current);
 
+    // 容器重新可见时触发重新渲染（解决 display:none 后恢复白屏）
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && apiRef.current) {
+          apiRef.current.render();
+        }
+      }
+    }, { threshold: 0.01 });
+    observer.observe(containerRef.current);
+
     return () => {
+      observer.disconnect();
       destroyChordTooltip();
       api.destroy();
       apiRef.current = null;
@@ -130,6 +146,19 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
       console.error('AlphaTex 渲染失败:', e);
     }
   }, [pipelineResult]);
+
+  // visible 从 false→true 时重新渲染（解决 display:none 后恢复白屏）
+  const prevVisibleRef = useRef(visible);
+  useEffect(() => {
+    const wasHidden = !prevVisibleRef.current;
+    prevVisibleRef.current = visible;
+    if (wasHidden && visible && apiRef.current) {
+      // 短延迟等 DOM 布局完成后再 render
+      requestAnimationFrame(() => {
+        apiRef.current?.render();
+      });
+    }
+  }, [visible]);
 
   // BPM 同步
   useEffect(() => {
