@@ -131,24 +131,26 @@ export function App() {
             />
           </div>
         )}
-        {editorMode !== 'tab' && (
+        {/* TMD 模式曲谱 — 始终挂载，用 display 控制可见性 */}
+        <div style={{ display: editorMode !== 'tab' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column', minWidth: 0 }}>
           <ScorePane
             pipelineResult={state.pipelineResult}
             playbackState={state.playbackState}
             onPlaybackStateChange={state.setPlaybackState}
             colors={activeColors}
+            visible={editorMode !== 'tab'}
           />
-        )}
-        {editorMode === 'tab' && (
-          <div className="score-pane" style={{ display: tabPreviewOpen ? 'flex' : 'none' }}>
-            <ScorePane
-              pipelineResult={tabPipelineResult}
-              playbackState={state.playbackState}
-              onPlaybackStateChange={state.setPlaybackState}
-              colors={activeColors}
-            />
-          </div>
-        )}
+        </div>
+        {/* TAB 模式曲谱 — 始终挂载，用 display 控制可见性 */}
+        <div style={{ display: editorMode === 'tab' && tabPreviewOpen ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column', minWidth: 0 }}>
+          <ScorePane
+            pipelineResult={tabPipelineResult}
+            playbackState={state.playbackState}
+            onPlaybackStateChange={state.setPlaybackState}
+            colors={activeColors}
+            visible={editorMode === 'tab' && tabPreviewOpen}
+          />
+        </div>
         {state.sidebarTab && (
           <Sidebar
             tab={state.sidebarTab}
