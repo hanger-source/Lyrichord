@@ -1,2 +1,2 @@
-# ChordEcho
-ChordEcho
+# Lyrichord
+Lyrichord

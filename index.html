@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lyrichord 歌弦</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <h1>🎸 Lyrichord <span class="subtitle">歌弦</span></h1>
+      <p class="tagline">Write Lyrics, Play Chords, Hear the Soul.</p>
+    </header>
+
+    <div class="main-layout">
+      <!-- 左侧：TMD 编辑器 -->
+      <div class="editor-pane">
+        <div class="pane-toolbar">
+          <span class="pane-title">📝 TabMarkdown</span>
+          <button id="btn-render" class="btn-primary">渲染曲谱</button>
+        </div>
+        <textarea id="tmd-editor" spellcheck="false"></textarea>
+      </div>
+
+      <!-- 右侧：AlphaTab 渲染区 -->
+      <div class="score-pane">
+        <div class="pane-toolbar">
+          <span class="pane-title">🎼 曲谱预览</span>
+          <div class="player-controls">
+            <button id="btn-play" class="btn-icon" title="播放/暂停">▶</button>
+            <button id="btn-stop" class="btn-icon" title="停止">⏹</button>
+            <label class="bpm-control">
+              BPM: <input id="bpm-input" type="number" value="72" min="40" max="240" />
+            </label>
+          </div>
+        </div>
+        <div id="alphatab-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
