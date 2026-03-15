@@ -4,6 +4,7 @@
  * 项目由 App 层管理，这里只管段落。
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
+import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { SegmentNav } from './SegmentNav';
 import { TabEditor } from './TabEditor';
 import type { ChordSelectionPending, TabMeasure } from './TabEditor';
@@ -40,6 +41,7 @@ export function TabWorkspace({
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const saveMsgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
+  const [editorTempo, setEditorTempo] = useState(72);
   const [editorBpm, setEditorBpm] = useState(8);
   const [editorTsLabel, setEditorTsLabel] = useState('4/4');
   const [editorMeasures, setEditorMeasures] = useState<TabMeasure[] | null>(null);
@@ -83,6 +85,7 @@ export function TabWorkspace({
       try {
         const parsed = JSON.parse(seg.measuresJson) as TabMeasure[];
         setEditorMeasures(parsed);
+        setEditorTempo(seg.tempo);
         setEditorBpm(seg.bpm);
         setEditorTsLabel(seg.tsLabel);
         setSegmentName(seg.name);
@@ -98,6 +101,7 @@ export function TabWorkspace({
     try {
       const parsed = JSON.parse(seg.measuresJson) as TabMeasure[];
       setEditorMeasures(parsed);
+      setEditorTempo(seg.tempo);
       setEditorBpm(seg.bpm);
       setEditorTsLabel(seg.tsLabel);
       setActiveSegId(seg.id);
@@ -112,6 +116,7 @@ export function TabWorkspace({
   const handleNewSegment = useCallback(() => {
     setActiveSegId(null);
     setEditorMeasures(null);
+    setEditorTempo(72);
     setSegmentName('');
     setEditorKey(k => k + 1);
   }, []);
@@ -135,16 +140,11 @@ export function TabWorkspace({
     saveMsgTimer.current = setTimeout(() => setSaveMsg(null), 2500);
   }, []);
 
-  const handleSave = useCallback(async (measures: TabMeasure[], bpm: number, tsLabel: string) => {
-    const hasAnyContent = measures.some(m =>
-      m.chords.length > 0 ||
-      m.beats.some(b => b.rest || b.strings.some(s => s.type !== 'none'))
-    );
-    if (!hasAnyContent && activeSegId) {
-      const ok = window.confirm('当前段落内容为空，确定要覆盖已保存的数据吗？');
-      if (!ok) return;
-    }
+  // 空内容覆盖确认 dialog
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const pendingSaveRef = useRef<{ measures: TabMeasure[]; tempo: number; bpm: number; tsLabel: string } | null>(null);
 
+  const doSave = useCallback(async (measures: TabMeasure[], tempo: number, bpm: number, tsLabel: string) => {
     const name = segmentName.trim() || '未命名段落';
     setSaving(true);
     try {
@@ -152,6 +152,7 @@ export function TabWorkspace({
         id: activeSegId ?? undefined,
         name,
         projectId,
+        tempo,
         bpm,
         tsLabel,
         measuresJson: JSON.stringify(measures),
@@ -168,11 +169,34 @@ export function TabWorkspace({
     }
   }, [segmentName, activeSegId, projectId, showSaveMsg, refreshSegments]);
 
+  const handleSave = useCallback(async (measures: TabMeasure[], tempo: number, bpm: number, tsLabel: string) => {
+    const hasAnyContent = measures.some(m =>
+      m.chords.length > 0 ||
+      m.beats.some(b => b.rest || b.strings.some(s => s.type !== 'none'))
+    );
+    if (!hasAnyContent && activeSegId) {
+      pendingSaveRef.current = { measures, tempo, bpm, tsLabel };
+      setConfirmOpen(true);
+      return;
+    }
+    await doSave(measures, tempo, bpm, tsLabel);
+  }, [activeSegId, doSave]);
+
+  const handleConfirmSave = useCallback(() => {
+    setConfirmOpen(false);
+    if (pendingSaveRef.current) {
+      const { measures, tempo, bpm, tsLabel } = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      doSave(measures, tempo, bpm, tsLabel);
+    }
+  }, [doSave]);
+
   return (
     <div className="tab-workspace">
       <SegmentNav
         segments={segments}
         activeSegmentId={activeSegId}
+        isNewSegment={!activeSegId}
         onSelectSegment={handleSelectSegment}
         onNewSegment={handleNewSegment}
         onDeleteSegment={handleDeleteSegment}
@@ -181,6 +205,7 @@ export function TabWorkspace({
         <TabEditor
           key={editorKey}
           initialMeasures={editorMeasures}
+          initialTempo={editorTempo}
           initialBpm={editorBpm}
           initialTsLabel={editorTsLabel}
           segmentName={segmentName}
@@ -188,7 +213,6 @@ export function TabWorkspace({
           onSave={handleSave}
           saving={saving}
           saveMsg={saveMsg}
-          isUpdate={!!activeSegId}
           onTmdChange={onTmdChange}
           onChordSelectionStart={onChordSelectionStart}
           chordToApply={chordToApply}
@@ -198,6 +222,24 @@ export function TabWorkspace({
           onTogglePreview={onTogglePreview}
         />
       </div>
+
+      <AlertDialog.Root open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialog.Portal>
+          <AlertDialog.Overlay className="radix-dialog-overlay" />
+          <AlertDialog.Content className="radix-dialog-content" style={{ maxWidth: 400 }}>
+            <AlertDialog.Title className="radix-dialog-title">确认覆盖</AlertDialog.Title>
+            <AlertDialog.Description className="radix-dialog-desc">
+              当前段落内容为空，确定要覆盖已保存的数据吗？
+            </AlertDialog.Description>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <AlertDialog.Cancel className="radix-dialog-btn">取消</AlertDialog.Cancel>
+              <AlertDialog.Action className="radix-dialog-btn radix-dialog-btn--danger" onClick={handleConfirmSave}>
+                确认覆盖
+              </AlertDialog.Action>
+            </div>
+          </AlertDialog.Content>
+        </AlertDialog.Portal>
+      </AlertDialog.Root>
     </div>
   );
 }

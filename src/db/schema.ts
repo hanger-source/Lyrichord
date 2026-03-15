@@ -92,6 +92,7 @@ export const SCHEMA_DDL: string[] = [
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     project_id  TEXT REFERENCES scores(id) ON DELETE SET NULL,
+    tempo       INTEGER NOT NULL DEFAULT 72,
     bpm         INTEGER NOT NULL DEFAULT 8,
     ts_label    TEXT NOT NULL DEFAULT '4/4',
     measures_json TEXT NOT NULL,

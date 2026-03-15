@@ -6,7 +6,7 @@
  * - 上下文栏：拍选中时显示拆拍/合拍等操作
  */
 import * as Select from '@radix-ui/react-select';
-import { ChevronDown, Check } from 'lucide-react';
+import { ChevronDown, Check, Save } from 'lucide-react';
 
 interface TabToolbarProps {
   // 段落
@@ -15,7 +15,6 @@ interface TabToolbarProps {
   onSave: () => void;
   saving: boolean;
   saveMsg: string | null;
-  isUpdate: boolean;
   // 撤销
   onUndo: () => void;
   onRedo: () => void;
@@ -27,6 +26,9 @@ interface TabToolbarProps {
   onCancelBeatSel: () => void;
   // 和弦提示
   hasPendingSel: boolean;
+  // tempo
+  tempo: number;
+  onTempoChange: (t: number) => void;
   // 拍号
   tsLabel: string;
   onTsChange: (label: string, bpm: number) => void;
@@ -41,10 +43,11 @@ interface TabToolbarProps {
 }
 
 export function TabToolbar({
-  segmentName, onSegmentNameChange, onSave, saving, saveMsg, isUpdate,
+  segmentName, onSegmentNameChange, onSave, saving, saveMsg,
   onUndo, onRedo,
   beatSelCount, onSplitBeat, onMergeBeats, onToggleRest, onCancelBeatSel,
   hasPendingSel,
+  tempo, onTempoChange,
   tsLabel, onTsChange, timeSigs,
   measureCount, onAddMeasure, onRemoveMeasure,
   previewOpen, onTogglePreview,
@@ -53,8 +56,8 @@ export function TabToolbar({
 
   return (
     <div className="tab-toolbar-wrap">
-      {/* 主栏 */}
-      <div className="tab-toolbar">
+      {/* 第一行：段落名称 + 保存 */}
+      <div className="tab-toolbar tab-toolbar--row1">
         <div className="tab-toolbar-left">
           <input
             className="tab-segment-name-input"
@@ -63,14 +66,31 @@ export function TabToolbar({
             value={segmentName}
             onChange={e => onSegmentNameChange(e.target.value)}
           />
-          <button className="tab-action-btn tab-save-btn" onClick={onSave} disabled={saving}>
-            {saving ? '...' : isUpdate ? '更新' : '保存'}
-          </button>
           {saveMsg && <span className="tab-seg-msg">{saveMsg}</span>}
         </div>
+        <button className="tab-action-btn tab-save-btn" onClick={onSave} disabled={saving} title="保存段落 (Ctrl+S)">
+          <Save size={13} /> {saving ? '...' : '保存'}
+        </button>
+      </div>
+
+      {/* 第二行：编辑操作 */}
+      <div className="tab-toolbar tab-toolbar--row2">
         <div className="tab-toolbar-actions">
           <button className="tab-action-btn" onClick={onUndo} title="撤销 (Ctrl+Z)">↩</button>
           <button className="tab-action-btn" onClick={onRedo} title="重做 (Ctrl+Shift+Z)">↪</button>
+          <span className="tab-toolbar-divider">|</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input
+              className="radix-select-trigger radix-select-trigger--compact"
+              type="number"
+              min={20}
+              max={300}
+              value={tempo}
+              onChange={e => { const v = parseInt(e.target.value, 10); if (v > 0) onTempoChange(v); }}
+              style={{ width: 52, textAlign: 'center' }}
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>bpm</span>
+          </div>
           <span className="tab-toolbar-divider">|</span>
           <Select.Root
             value={tsLabel}
@@ -97,12 +117,12 @@ export function TabToolbar({
           <button className="tab-action-btn" onClick={onAddMeasure}>+ 小节</button>
           <button className="tab-action-btn" onClick={onRemoveMeasure} disabled={measureCount <= 1}>− 小节</button>
           <span className="tab-toolbar-count">{measureCount} 小节</span>
-          {onTogglePreview && (
-            <button className="tab-action-btn" onClick={onTogglePreview}>
-              {previewOpen ? '关闭预览' : '曲谱预览'}
-            </button>
-          )}
         </div>
+        {onTogglePreview && (
+          <button className="tab-action-btn" onClick={onTogglePreview} style={{ marginLeft: 'auto' }}>
+            {previewOpen ? '关闭预览' : '曲谱预览'}
+          </button>
+        )}
       </div>
 
       {/* 上下文栏 — 拍选中或和弦待填入时显示 */}
