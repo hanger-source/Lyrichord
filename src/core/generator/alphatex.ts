@@ -10,8 +10,7 @@
  * 4. 每个 Beat 根据 chordId → frets + rhythmSlots → NoteEvents → AlphaTex
  */
 import type {
-  Song, MasterBar, Bar, Beat,
-  RhythmPattern, GuitarFrets,
+  Song, Bar, RhythmPattern, GuitarFrets,
   AlphaTexOutput, GeneratedMeasure,
   DurationValue, Dynamic,
 } from '../types';
@@ -19,7 +18,7 @@ import { durationToAlphaTex, durationToBeats, beatsToDuration } from '../types';
 import { resolveChord } from '../chord/resolver';
 import { notesToAlphaTex } from '../chord/voicing';
 import { expandRhythm, type NoteEvent } from '../rhythm/expander';
-import { inferDynamic, dynamicToAlphaTex } from './dynamics';
+import { dynamicToAlphaTex } from './dynamics';
 
 /**
  * 从 Song 生成完整 AlphaTex
@@ -53,14 +52,10 @@ export function generate(song: Song): AlphaTexOutput {
     if (mb.rhythmId) activeRhythmId = mb.rhythmId;
     if (mb.dynamic) activeDynamic = mb.dynamic;
 
-    // 段落首小节推断力度
+    // 段落首小节力度（仅使用显式设置的 mb.dynamic）
     let measureDynamic: Dynamic | null = null;
-    if (mb.section) {
-      const inferred = inferDynamic(mb.section.name);
-      if (inferred !== activeDynamic) {
-        activeDynamic = inferred;
-        measureDynamic = inferred;
-      }
+    if (mb.dynamic && mb.dynamic !== activeDynamic) {
+      measureDynamic = mb.dynamic;
     }
 
     // 查找当前节奏型
