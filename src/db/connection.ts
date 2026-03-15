@@ -100,25 +100,31 @@ export async function getDb(): Promise<Database> {
   // 启用外键约束
   db.run('PRAGMA foreign_keys = ON');
 
-  // 建表（IF NOT EXISTS，幂等）
-  for (const ddl of SCHEMA_DDL) {
-    db.run(ddl);
-  }
-
   // ---- Schema 迁移: 为旧数据库添加新列 ----
-  const migrations: Array<{ table: string; column: string; type: string }> = [
+  // 必须在 DDL 之前执行，否则 CREATE INDEX 引用新列会失败
+  const migrations: Array<{ table: string; column: string; type: string; dflt?: string }> = [
     { table: 'chords', column: 'positions_json', type: 'TEXT' },
     { table: 'chords', column: 'midi_json', type: 'TEXT' },
     { table: 'chords', column: 'chord_key', type: 'TEXT' },
     { table: 'chords', column: 'suffix', type: 'TEXT' },
+    { table: 'tab_segments', column: 'project_id', type: 'TEXT' },
+    { table: 'tab_segments', column: 'bpm', type: 'INTEGER', dflt: '8' },
+    { table: 'tab_segments', column: 'ts_label', type: 'TEXT', dflt: "'4/4'" },
+    { table: 'tab_segments', column: 'sort_order', type: 'INTEGER', dflt: '0' },
   ];
 
   for (const m of migrations) {
     try {
-      db.run(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.type}`);
+      const dflt = m.dflt ? ` DEFAULT ${m.dflt}` : '';
+      db.run(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.type}${dflt}`);
     } catch {
-      // 列已存在，忽略（SQLite ALTER TABLE ADD COLUMN 重复会报错）
+      // 列已存在或表不存在，忽略
     }
+  }
+
+  // 建表 + 索引（IF NOT EXISTS，幂等）
+  for (const ddl of SCHEMA_DDL) {
+    db.run(ddl);
   }
 
   return db;
@@ -133,6 +139,54 @@ export async function persist(): Promise<void> {
   if (!db) return;
   const data = db.export();
   await saveToIDB(data);
+  // 自动备份关键数据到 localStorage
+  backupToLocalStorage(db);
+}
+
+const BACKUP_KEY = 'lyrichord-backup';
+const BACKUP_MAX = 5; // 保留最近 5 次快照
+
+/**
+ * 将段落和项目数据快照到 localStorage
+ * 格式: { snapshots: [{ ts, segments, scores }], latest: ... }
+ */
+function backupToLocalStorage(database: Database): void {
+  try {
+    // 查段落
+    const segStmt = database.prepare('SELECT * FROM tab_segments');
+    const segments: Record<string, unknown>[] = [];
+    while (segStmt.step()) segments.push(segStmt.getAsObject());
+    segStmt.free();
+
+    // 查项目
+    const scoreStmt = database.prepare('SELECT id, title, artist FROM scores');
+    const scores: Record<string, unknown>[] = [];
+    while (scoreStmt.step()) scores.push(scoreStmt.getAsObject());
+    scoreStmt.free();
+
+    const snapshot = {
+      ts: new Date().toISOString(),
+      segments,
+      scores,
+    };
+
+    // 读取已有备份
+    let backups: { snapshots: typeof snapshot[] } = { snapshots: [] };
+    try {
+      const raw = localStorage.getItem(BACKUP_KEY);
+      if (raw) backups = JSON.parse(raw);
+    } catch {}
+
+    // 追加新快照，保留最近 N 次
+    backups.snapshots.push(snapshot);
+    if (backups.snapshots.length > BACKUP_MAX) {
+      backups.snapshots = backups.snapshots.slice(-BACKUP_MAX);
+    }
+
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(backups));
+  } catch (e) {
+    console.warn('备份到 localStorage 失败:', e);
+  }
 }
 
 

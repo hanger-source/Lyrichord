@@ -60,6 +60,20 @@ export interface ColorTokens {
   chordFinger3: string;
   chordFinger4: string;
   chordDotDefault: string;
+
+  // TAB 编辑器
+  beatGroupA: string;
+  beatGroupB: string;
+  beatSelBg: string;
+  beatGroupBorder: string;
+  splitColor: string;
+  splitBg: string;
+  splitBgAlt: string;
+  splitDash: string;
+  mergeColor: string;
+  mergeBg: string;
+  mergeBgAlt: string;
+  mergeBar: string;
 }
 
 /** 布局 — 全局共享，不随主题切换 */
@@ -172,6 +186,20 @@ export function applyTheme(t: ThemeTokens): void {
   s.setProperty('--chord-finger3', t.chordFinger3);
   s.setProperty('--chord-finger4', t.chordFinger4);
   s.setProperty('--chord-dot-default', t.chordDotDefault);
+
+  // TAB 编辑器
+  s.setProperty('--beat-group-a', t.beatGroupA);
+  s.setProperty('--beat-group-b', t.beatGroupB);
+  s.setProperty('--beat-sel-bg', t.beatSelBg);
+  s.setProperty('--beat-group-border', t.beatGroupBorder);
+  s.setProperty('--split-color', t.splitColor);
+  s.setProperty('--split-bg', t.splitBg);
+  s.setProperty('--split-bg-alt', t.splitBgAlt);
+  s.setProperty('--split-dash', t.splitDash);
+  s.setProperty('--merge-color', t.mergeColor);
+  s.setProperty('--merge-bg', t.mergeBg);
+  s.setProperty('--merge-bg-alt', t.mergeBgAlt);
+  s.setProperty('--merge-bar', t.mergeBar);
 
   // 布局
   s.setProperty('--radius', t.radius);

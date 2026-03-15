@@ -86,4 +86,18 @@ export const SCHEMA_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_score_chords_chord ON score_chords(chord_id)`,
   `CREATE INDEX IF NOT EXISTS idx_score_rhythms_rhythm ON score_rhythms(rhythm_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chords_source ON chords(source)`,
+
+  // ---- TAB 段落 ----
+  `CREATE TABLE IF NOT EXISTS tab_segments (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    project_id  TEXT REFERENCES scores(id) ON DELETE SET NULL,
+    bpm         INTEGER NOT NULL DEFAULT 8,
+    ts_label    TEXT NOT NULL DEFAULT '4/4',
+    measures_json TEXT NOT NULL,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tab_segments_project ON tab_segments(project_id)`,
 ];
