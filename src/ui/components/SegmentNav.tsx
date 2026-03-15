@@ -9,13 +9,14 @@ import type { SegmentRecord } from '../../db/segment-repo';
 interface SegmentNavProps {
   segments: SegmentRecord[];
   activeSegmentId: string | null;
+  isNewSegment?: boolean;
   onSelectSegment: (seg: SegmentRecord) => void;
   onNewSegment: () => void;
   onDeleteSegment: (id: string) => void;
 }
 
 export function SegmentNav({
-  segments, activeSegmentId,
+  segments, activeSegmentId, isNewSegment,
   onSelectSegment, onNewSegment, onDeleteSegment,
 }: SegmentNavProps) {
   return (
@@ -25,12 +26,18 @@ export function SegmentNav({
         <span className="seg-nav-count">{segments.length}</span>
       </div>
       <div className="seg-nav-list">
-        {segments.length === 0 ? (
+        {isNewSegment && (
+          <div className="seg-nav-item seg-nav-item--active seg-nav-item--new">
+            <span className="seg-nav-item-name">新段落</span>
+            <span className="seg-nav-item-meta">未保存</span>
+          </div>
+        )}
+        {segments.length === 0 && !isNewSegment ? (
           <div className="seg-nav-empty">点击下方新建段落</div>
         ) : segments.map(seg => (
           <div
             key={seg.id}
-            className={`seg-nav-item ${seg.id === activeSegmentId ? 'seg-nav-item--active' : ''}`}
+            className={`seg-nav-item ${!isNewSegment && seg.id === activeSegmentId ? 'seg-nav-item--active' : ''}`}
             onClick={() => onSelectSegment(seg)}
           >
             <span className="seg-nav-item-name">{seg.name}</span>

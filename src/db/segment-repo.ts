@@ -8,6 +8,7 @@ export interface SegmentRecord {
   id: string;
   name: string;
   projectId: string | null;
+  tempo: number;
   bpm: number;
   tsLabel: string;
   measuresJson: string;
@@ -30,6 +31,7 @@ function rowToSegment(row: Record<string, unknown>): SegmentRecord {
     id: row.id as string,
     name: row.name as string,
     projectId: (row.project_id as string) ?? null,
+    tempo: (row.tempo as number) ?? 72,
     bpm: row.bpm as number,
     tsLabel: row.ts_label as string,
     measuresJson: row.measures_json as string,
@@ -66,6 +68,7 @@ export async function saveSegment(params: {
   id?: string;
   name: string;
   projectId?: string | null;
+  tempo?: number;
   bpm: number;
   tsLabel: string;
   measuresJson: string;
@@ -74,18 +77,19 @@ export async function saveSegment(params: {
   const db = await getDb();
   const { name, bpm, tsLabel, measuresJson } = params;
   const projectId = params.projectId ?? null;
+  const tempo = params.tempo ?? 72;
   const sortOrder = params.sortOrder ?? 0;
   const id = params.id ?? generateId();
 
   if (params.id) {
     db.run(
-      `UPDATE tab_segments SET name=?, project_id=?, bpm=?, ts_label=?, measures_json=?, sort_order=?, updated_at=datetime('now') WHERE id=?`,
-      [name, projectId, bpm, tsLabel, measuresJson, sortOrder, id]
+      `UPDATE tab_segments SET name=?, project_id=?, tempo=?, bpm=?, ts_label=?, measures_json=?, sort_order=?, updated_at=datetime('now') WHERE id=?`,
+      [name, projectId, tempo, bpm, tsLabel, measuresJson, sortOrder, id]
     );
   } else {
     db.run(
-      `INSERT INTO tab_segments (id, name, project_id, bpm, ts_label, measures_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, name, projectId, bpm, tsLabel, measuresJson, sortOrder]
+      `INSERT INTO tab_segments (id, name, project_id, tempo, bpm, ts_label, measures_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, name, projectId, tempo, bpm, tsLabel, measuresJson, sortOrder]
     );
   }
   await persist();

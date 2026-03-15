@@ -1,7 +1,20 @@
 /**
  * 数据库工具面板 — 从 Header 齿轮图标打开
  *
- * 提供: 数据状态检查、孤儿段落迁移等维护操作
+ * 职责：数据库维护操作的统一入口
+ * - 检查状态：查看段落数、孤儿段落、项目列表
+ * - 迁移孤儿段落：把 project_id IS NULL 的段落归属到默认项目
+ * - 升级表结构：ALTER TABLE 补列（schema.ts 加了新列但旧 IndexedDB 里的表没有时用）
+ *
+ * ====== 如何添加新的表结构迁移 ======
+ * 1. 在 schema.ts 的 CREATE TABLE 里加新列（新用户直接建表就有）
+ * 2. 在下面 runSchemaMigrations 函数里加一段：
+ *    if (!colNames.includes('新列名')) {
+ *      db.run("ALTER TABLE 表名 ADD COLUMN 新列名 类型 DEFAULT 默认值");
+ *      added.push('新列名');
+ *    }
+ * 3. 老用户打开数据库工具面板点「升级表结构」即可
+ * ==========================================
  */
 import { useState, useCallback } from 'react';
 import { getDb, persist } from '../../db/connection';
@@ -49,6 +62,32 @@ export function DbToolsPanel() {
     }
   }, []);
 
+  const runSchemaMigrations = useCallback(async () => {
+    setLoading(true);
+    try {
+      const db = await getDb();
+      const cols = db.exec("PRAGMA table_info(tab_segments)");
+      const colNames = cols.length > 0 ? cols[0].values.map((r: unknown[]) => r[1] as string) : [];
+      const added: string[] = [];
+
+      if (!colNames.includes('tempo')) {
+        db.run("ALTER TABLE tab_segments ADD COLUMN tempo INTEGER NOT NULL DEFAULT 72");
+        added.push('tempo');
+      }
+
+      if (added.length === 0) {
+        setLog('表结构已是最新，无需升级。');
+      } else {
+        await persist();
+        setLog(`升级完成，新增列: ${added.join(', ')}`);
+      }
+    } catch (e) {
+      setLog('升级失败: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const runMigration = useCallback(async () => {
     setLoading(true);
     try {
@@ -70,7 +109,7 @@ export function DbToolsPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button className="btn-tiny" onClick={checkStatus} disabled={loading}
           style={{ padding: '4px 12px', fontSize: 13 }}>
           检查状态
@@ -78,6 +117,10 @@ export function DbToolsPanel() {
         <button className="btn-tiny" onClick={runMigration} disabled={loading}
           style={{ padding: '4px 12px', fontSize: 13 }}>
           迁移孤儿段落
+        </button>
+        <button className="btn-tiny" onClick={runSchemaMigrations} disabled={loading}
+          style={{ padding: '4px 12px', fontSize: 13 }}>
+          升级表结构
         </button>
       </div>
 

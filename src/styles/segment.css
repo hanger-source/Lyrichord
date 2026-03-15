@@ -85,6 +85,8 @@
   flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .seg-nav-item--active .seg-nav-item-name { font-weight: 600; color: var(--accent); }
+.seg-nav-item--new { border-left-style: dashed; opacity: 0.8; }
+.seg-nav-item--new .seg-nav-item-meta { font-style: italic; }
 .seg-nav-item-meta { font-size: 12px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
 .seg-nav-item-del {
   opacity: 0; background: none; border: none; color: var(--text-muted);

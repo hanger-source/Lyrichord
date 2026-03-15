@@ -128,10 +128,40 @@ function mToChordLine(m: TabMeasure): string {
   return `| ${[...groups.values()].map(v => v ?? '.').join(' ')} |`;
 }
 
-function genTmd(measures: TabMeasure[]): string {
-  return measures
+function genTmd(measures: TabMeasure[], opts?: { bpm?: number; tsLabel?: string; sectionName?: string }): string {
+  const tempo = opts?.bpm ?? 72;
+  const ts = opts?.tsLabel ?? '4/4';
+  const section = opts?.sectionName?.trim() || 'Untitled';
+
+  // 收集用到的和弦，检查是否有自定义 define 需要写入 header
+  const usedChords = new Set<string>();
+  for (const m of measures) {
+    for (const c of m.chords) usedChords.add(c.name);
+  }
+  const chordDefs: string[] = [];
+  for (const name of usedChords) {
+    const def = resolveChord(name);
+    if (def?.positions?.[0]) {
+      const pos = def.positions[0];
+      const frets = pos.frets.map(f => f < 0 ? 'x' : String(f)).join(' ');
+      chordDefs.push(`define [${name}]: { frets: "${frets}" }`);
+    }
+  }
+
+  const header = [
+    '---',
+    `tempo: ${tempo}`,
+    `time_signature: ${ts}`,
+    ...(chordDefs.length > 0 ? ['', ...chordDefs] : []),
+    '---',
+  ].join('\n');
+
+  const body = measures
     .map((m, i) => hasContent(m) ? `${mToChordLine(m)}\ntex: ${mToTex(m, measures, i)}` : null)
     .filter(Boolean).join('\n\n');
+
+  if (!body) return '';
+  return `${header}\n\n[${section}]\n\n${body}\n`;
 }
 
 function splitRows(measures: TabMeasure[], cw: number): number[][] {
@@ -149,14 +179,14 @@ function splitRows(measures: TabMeasure[], cw: number): number[][] {
 
 interface TabEditorProps {
   initialMeasures?: TabMeasure[] | null;
+  initialTempo?: number;
   initialBpm?: number;
   initialTsLabel?: string;
   segmentName?: string;
   onSegmentNameChange?: (name: string) => void;
-  onSave?: (measures: TabMeasure[], bpm: number, tsLabel: string) => void;
+  onSave?: (measures: TabMeasure[], tempo: number, bpm: number, tsLabel: string) => void;
   saving?: boolean;
   saveMsg?: string | null;
-  isUpdate?: boolean;
   onTmdChange?: (tmd: string) => void;
   onChordSelectionStart?: (sel: ChordSelectionPending) => void;
   chordToApply?: string | null;
@@ -167,12 +197,13 @@ interface TabEditorProps {
 }
 
 export function TabEditor({
-  initialMeasures, initialBpm = 8, initialTsLabel = '4/4',
+  initialMeasures, initialTempo = 72, initialBpm = 8, initialTsLabel = '4/4',
   segmentName = '', onSegmentNameChange,
-  onSave, saving, saveMsg, isUpdate,
+  onSave, saving, saveMsg,
   onTmdChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
   previewOpen, onTogglePreview,
 }: TabEditorProps) {
+  const [tempo, setTempo] = useState(initialTempo);
   const [bpm, setBpm] = useState(initialBpm);
   const [tsLabel, setTsLabel] = useState(initialTsLabel);
   const [measures, setMeasures] = useState<TabMeasure[]>(() =>
@@ -260,7 +291,7 @@ export function TabEditor({
   }, [chordToApply, pendingSel, onChordApplied, updateMeasures]);
 
   const rows = useMemo(() => splitRows(measures, containerW), [measures, containerW]);
-  const tmdText = useMemo(() => genTmd(measures), [measures]);
+  const tmdText = useMemo(() => genTmd(measures, { bpm: tempo, tsLabel, sectionName: segmentName }), [measures, tempo, tsLabel, segmentName]);
   useEffect(() => { onTmdChange?.(tmdText); }, [tmdText, onTmdChange]);
 
   // TMD 折叠面板 — 编辑草稿
@@ -417,10 +448,9 @@ export function TabEditor({
       <TabToolbar
         segmentName={segmentName}
         onSegmentNameChange={n => onSegmentNameChange?.(n)}
-        onSave={() => onSave?.(measures, bpm, tsLabel)}
+        onSave={() => onSave?.(measures, tempo, bpm, tsLabel)}
         saving={!!saving}
         saveMsg={saveMsg ?? null}
-        isUpdate={!!isUpdate}
         onUndo={undo}
         onRedo={redo}
         beatSelCount={selCount}
@@ -429,6 +459,8 @@ export function TabEditor({
         onToggleRest={toggleRestForSel}
         onCancelBeatSel={() => setBeatSel(null)}
         hasPendingSel={!!pendingSel}
+        tempo={tempo}
+        onTempoChange={setTempo}
         tsLabel={tsLabel}
         onTsChange={handleTsChange}
         timeSigs={TIME_SIGS}
