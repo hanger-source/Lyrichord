@@ -1,250 +1,474 @@
 /**
- * AlphaTex 生成器 v3
+ * AlphaTex 生成器 v7
  *
  * Song → AlphaTexOutput
  *
- * 核心逻辑:
- * 1. 遍历 masterBars + bars (1:1 对应)
- * 2. rhythmId 继承: MasterBar.rhythmId 设置后持续生效直到下一个
- * 3. chordId 继承: Beat.chordId 设置后持续生效直到下一个
- * 4. 每个 Beat 根据 chordId → frets + rhythmSlots → NoteEvents → AlphaTex
+ * 两种小节模式:
+ *   1. TEX 直通: beat._rawTex 存在 → 直接输出原始 AlphaTex beat 文本
+ *   2. 节奏型展开: 用 chordSlots + rhythmPattern 生成 beat 序列
+ *
+ * 歌词: 使用 AlphaTab 的 \lyrics staff-level 指令
+ *   格式: \lyrics "word1 word2 - word3 ..."
+ *   空格分隔对应每个 beat，"-" 表示延续
  */
 import type {
-  Song, Bar, RhythmPattern, GuitarFrets,
+  Song, Bar, Beat, RhythmPattern, GuitarFrets,
   AlphaTexOutput, GeneratedMeasure,
-  DurationValue, Dynamic,
+  DurationValue, Dynamic, Note, RhythmSlot,
 } from '../types';
-import { durationToAlphaTex, durationToBeats, beatsToDuration } from '../types';
+import {
+  Duration, durationToAlphaTex, durationToBeats, beatsToDuration,
+} from '../types';
 import { resolveChord } from '../chord/resolver';
 import { notesToAlphaTex } from '../chord/voicing';
-import { expandRhythm, type NoteEvent } from '../rhythm/expander';
 import { dynamicToAlphaTex } from './dynamics';
 
-/**
- * 从 Song 生成完整 AlphaTex
- */
 export function generate(song: Song): AlphaTexOutput {
   const measures: GeneratedMeasure[] = [];
-  const lines: string[] = [];
+  const headerLines: string[] = [];
+  const barLines: string[] = [];
 
-  // ---- 头部 ----
-  if (song.meta.title) lines.push(`\\title "${song.meta.title}"`);
-  if (song.meta.artist) lines.push(`\\subtitle "${song.meta.artist}"`);
-  lines.push(`\\tempo ${song.meta.tempo}`);
-  lines.push(`\\instrument acousticguitarsteel`);
-  if (song.meta.capo > 0) lines.push(`\\capo ${song.meta.capo}`);
+  // ---- Header metadata ----
+  if (song.meta.title) headerLines.push(`\\title "${song.meta.title}"`);
+  if (song.meta.artist) headerLines.push(`\\subtitle "${song.meta.artist}"`);
+  headerLines.push(`\\tempo ${song.meta.tempo}`);
+  headerLines.push(`\\instrument acousticguitarsteel`);
+  if (song.meta.capo > 0) headerLines.push(`\\capo ${song.meta.capo}`);
   const ts = song.meta.timeSignature;
-  lines.push(`\\ts ${ts.numerator} ${ts.denominator}`);
-  lines.push('.');
+  headerLines.push(`\\ts ${ts.numerator} ${ts.denominator}`);
 
-  // ---- 状态跟踪 ----
+  const beatsPerMeasure = ts.numerator * (4 / ts.denominator);
+
   let activeRhythmId: string | null = null;
-  let activeDynamic: Dynamic | null = null;
-  let lastFrets: GuitarFrets | null = null;
+  let lastChordFrets: GuitarFrets | null = null;
+  let lastChordId: string | null = null;
 
-  // ---- 遍历小节 ----
+  // ---- 收集所有歌词用于 \lyrics 指令 ----
+  const allLyricWords: string[] = [];
+  const allLyric2Words: string[] = [];
+
   for (let i = 0; i < song.masterBars.length; i++) {
     const mb = song.masterBars[i];
     const bar = song.bars[i];
     if (!bar) continue;
 
-    // 更新继承状态
     if (mb.rhythmId) activeRhythmId = mb.rhythmId;
-    if (mb.dynamic) activeDynamic = mb.dynamic;
 
-    // 段落首小节力度（仅使用显式设置的 mb.dynamic）
-    let measureDynamic: Dynamic | null = null;
-    if (mb.dynamic && mb.dynamic !== activeDynamic) {
-      measureDynamic = mb.dynamic;
-    }
-
-    // 查找当前节奏型
     const rhythm = activeRhythmId
       ? song.rhythmLibrary.get(activeRhythmId) ?? null
       : null;
 
-    // 获取当前拍号
-    const currentTs = mb.timeSignature ?? song.meta.timeSignature;
+    // 检查是否是 tex 直通模式
+    const isTexMode = bar.beats.some(b => (b as any)._rawTex);
 
-    // 生成小节内容
-    const measureTex = generateBar(bar, rhythm, currentTs, song, lastFrets);
+    let measureTex: string;
+    let measureLyrics = '';
+    let measureLyrics2 = '';
 
-    // 更新 lastFrets (取小节最后一个有效和弦)
-    for (const beat of bar.beats) {
-      if (beat.chordId) {
-        const resolved = resolveChord(beat.chordId);
-        if (resolved) lastFrets = resolved.frets;
+    if (isTexMode) {
+      // TEX 直通模式
+      measureTex = generateTexPassthrough(bar, song, lastChordId, lastChordFrets);
+      // 更新 lastChord
+      for (const beat of bar.beats) {
+        if (beat.chordId) {
+          lastChordId = beat.chordId;
+          const frets = resolveFrets(beat.chordId, song);
+          if (frets) lastChordFrets = frets;
+        }
+      }
+    } else {
+      // 节奏型展开模式
+      const timeline = buildTimeline(bar, song, lastChordId, lastChordFrets);
+      if (timeline.endChordId) lastChordId = timeline.endChordId;
+      if (timeline.endFrets) lastChordFrets = timeline.endFrets;
+
+      measureTex = generateMeasure(rhythm, timeline, beatsPerMeasure);
+
+      // 收集歌词
+      for (const beat of bar.beats) {
+        if (beat.lyrics && beat.lyrics !== '~') {
+          measureLyrics += beat.lyrics;
+        }
+        const w2 = (beat as any)._lyrics2;
+        if (w2 && w2 !== '~') {
+          measureLyrics2 += w2;
+        }
       }
     }
 
-    // 力度前缀
-    let prefix = '';
-    if (measureDynamic) {
-      prefix = dynamicToAlphaTex(measureDynamic) + ' ';
+    // Section 标记
+    if (mb.section) {
+      barLines.push(`\\section "${mb.section.name}"`);
     }
+
+    barLines.push(measureTex + ' |');
 
     measures.push({
       notes: measureTex,
-      lyrics: bar.beats.map(b => b.lyrics ?? '').join(''),
-      dynamic: activeDynamic ?? undefined,
+      lyrics: measureLyrics || undefined,
     });
 
-    lines.push(prefix + measureTex + ' |');
+    // 收集歌词 words (每个 beat 对应一个 word)
+    if (!isTexMode) {
+      for (const beat of bar.beats) {
+        const ly = beat.lyrics;
+        if (ly && ly !== '~') {
+          allLyricWords.push(ly);
+        } else {
+          allLyricWords.push('-');
+        }
+        const w2 = (beat as any)._lyrics2;
+        if (w2 && w2 !== '~') {
+          allLyric2Words.push(w2);
+        } else {
+          allLyric2Words.push('-');
+        }
+      }
+    } else {
+      // tex 模式的 beat 不产生歌词
+      for (const _beat of bar.beats) {
+        allLyricWords.push('-');
+        allLyric2Words.push('-');
+      }
+    }
   }
+
+  // ---- 组装最终 AlphaTex ----
+  const lines = [...headerLines];
+
+  // 歌词指令 (如果有非空歌词)
+  const hasLyrics = allLyricWords.some(w => w !== '-');
+  if (hasLyrics) {
+    const lyricsStr = allLyricWords.join(' ');
+    lines.push(`\\lyrics "${lyricsStr}"`);
+  }
+
+  lines.push('.');  // 分隔符
+
+  lines.push(...barLines);
 
   return { tex: lines.join('\n'), measures };
 }
 
 
+// ============================================================
+// TEX 直通模式
+// ============================================================
+
 /**
- * 生成单个小节的 AlphaTex
+ * 直接输出 bar 中的 _rawTex beat 文本
+ * 和弦标记用 {ch "X"} 属性
  */
-function generateBar(
-  bar: Bar,
-  rhythm: RhythmPattern | null,
-  ts: { numerator: number; denominator: number },
-  song: Song,
+function generateTexPassthrough(
+  bar: Bar, song: Song,
+  inheritedChordId: string | null,
   inheritedFrets: GuitarFrets | null,
 ): string {
   const parts: string[] = [];
-  let lastFrets: GuitarFrets | null = inheritedFrets;
-  let beatOffset = 0;
 
   for (const beat of bar.beats) {
-    const beatBeats = durationToBeats(beat.duration);
+    const rawTex = (beat as any)._rawTex as string | undefined;
+    if (!rawTex) continue;
 
-    if (beat.isRest) {
-      parts.push(`r.${durationToAlphaTex(beat.duration)}`);
-      beatOffset += beatBeats;
-      continue;
-    }
-
-    // 确定当前 frets
-    let frets: GuitarFrets | null = null;
     if (beat.chordId) {
-      // 先查 song.chordLibrary (用户自定义)，再查内置库
-      const fromLib = song.chordLibrary.get(beat.chordId);
-      if (fromLib) {
-        frets = fromLib.frets;
-      } else {
-        const resolved = resolveChord(beat.chordId);
-        if (resolved) frets = resolved.frets;
-      }
-      if (frets) lastFrets = frets;
+      // 在 beat 前加和弦标记
+      parts.push(`${rawTex} {ch "${beat.chordId}"}`);
     } else {
-      // 延续上一个和弦
-      frets = lastFrets;
+      parts.push(rawTex);
     }
+  }
+
+  return parts.join(' ');
+}
+
+
+// ============================================================
+// Timeline: 从模板 beats 提取和弦变化点 + 歌词位置
+// ============================================================
+
+interface ChordChange {
+  beatPos: number;
+  chordId: string;
+  frets: GuitarFrets;
+}
+
+interface LyricsAt {
+  beatPos: number;
+  text: string;
+}
+
+interface MeasureTimeline {
+  chordChanges: ChordChange[];
+  lyrics: LyricsAt[];
+  inheritedFrets: GuitarFrets | null;
+  endChordId: string | null;
+  endFrets: GuitarFrets | null;
+}
+
+function buildTimeline(
+  bar: Bar, song: Song,
+  inheritedChordId: string | null,
+  inheritedFrets: GuitarFrets | null,
+): MeasureTimeline {
+  const chordChanges: ChordChange[] = [];
+  const lyrics: LyricsAt[] = [];
+  let currentChordId = inheritedChordId;
+  let currentFrets = inheritedFrets;
+  let beatPos = 0;
+
+  for (const beat of bar.beats) {
+    const dur = durationToBeats(beat.duration);
+
+    if (beat.chordId) {
+      const frets = resolveFrets(beat.chordId, song);
+      if (frets) {
+        chordChanges.push({ beatPos, chordId: beat.chordId, frets });
+        currentChordId = beat.chordId;
+        currentFrets = frets;
+      }
+    }
+
+    if (beat.lyrics) {
+      lyrics.push({ beatPos, text: beat.lyrics });
+    }
+
+    beatPos += dur;
+  }
+
+  return {
+    chordChanges,
+    lyrics,
+    inheritedFrets,
+    endChordId: currentChordId,
+    endFrets: currentFrets,
+  };
+}
+
+function resolveFrets(chordId: string, song: Song): GuitarFrets | null {
+  const fromLib = song.chordLibrary.get(chordId);
+  if (fromLib) return fromLib.frets;
+  const resolved = resolveChord(chordId);
+  return resolved ? resolved.frets : null;
+}
+
+
+// ============================================================
+// 节奏型展开生成
+// ============================================================
+
+function slotBeats(rhythm: RhythmPattern): number {
+  return rhythm.type === 'pluck' ? 0.5 : 0.25;
+}
+
+function generateMeasure(
+  rhythm: RhythmPattern | null,
+  timeline: MeasureTimeline,
+  beatsPerMeasure: number,
+): string {
+  if (!rhythm || rhythm.slots.length === 0) {
+    return generateFallbackMeasure(timeline, beatsPerMeasure);
+  }
+
+  const bps = slotBeats(rhythm);
+  const slotCount = rhythm.slots.length;
+  const totalSlots = Math.round(beatsPerMeasure / bps);
+
+  interface SlotInfo {
+    beatPos: number;
+    slot: RhythmSlot;
+    frets: GuitarFrets | null;
+    chordId: string | null;
+  }
+
+  const slots: SlotInfo[] = [];
+  let patIdx = 0;
+  let currentFrets = timeline.inheritedFrets;
+  let currentChordId: string | null = null;
+  let chordChangeIdx = 0;
+
+  for (let i = 0; i < totalSlots; i++) {
+    const beatPos = i * bps;
+
+    let newChord = false;
+    while (chordChangeIdx < timeline.chordChanges.length &&
+           timeline.chordChanges[chordChangeIdx].beatPos <= beatPos + 0.001) {
+      const cc = timeline.chordChanges[chordChangeIdx];
+      currentFrets = cc.frets;
+      currentChordId = cc.chordId;
+      newChord = true;
+      chordChangeIdx++;
+    }
+
+    if (newChord) patIdx = 0;
+
+    slots.push({
+      beatPos,
+      slot: rhythm.slots[patIdx % slotCount],
+      frets: currentFrets,
+      chordId: newChord ? currentChordId : null,
+    });
+
+    patIdx++;
+  }
+
+  // 合并 sustain
+  interface MergedEvent {
+    beatPos: number;
+    slot: RhythmSlot;
+    frets: GuitarFrets | null;
+    chordId: string | null;
+    slotSpan: number;
+  }
+
+  const events: MergedEvent[] = [];
+  for (const s of slots) {
+    const isSustain = s.slot.kind === 'strum' && s.slot.action === 'sustain';
+    if (isSustain && events.length > 0) {
+      events[events.length - 1].slotSpan++;
+    } else {
+      events.push({ ...s, slotSpan: 1 });
+    }
+  }
+
+  const parts: string[] = [];
+
+  for (const ev of events) {
+    const eventBeats = ev.slotSpan * bps;
+    const durVal = beatsToDuration(eventBeats);
+    const durStr = durationToAlphaTex(durVal);
+
+    const props: string[] = [];
+    if (ev.chordId) props.push(`ch "${ev.chordId}"`);
+
+    if (!ev.frets) {
+      const propsStr = wrapProps(props);
+      parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
+    } else {
+      const { notes, brush } = slotToNotes(ev.slot, ev.frets);
+      if (notes.length === 0) {
+        const propsStr = wrapProps(props);
+        parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
+      } else {
+        const noteTex = notesToAlphaTex(notes);
+        const allProps = brush
+          ? wrapProps([brush, ...props])
+          : wrapProps(props);
+        parts.push(allProps
+          ? `${noteTex}.${durStr} ${allProps}`
+          : `${noteTex}.${durStr}`);
+      }
+    }
+  }
+
+  return parts.join(' ');
+}
+
+function generateFallbackMeasure(
+  timeline: MeasureTimeline,
+  beatsPerMeasure: number,
+): string {
+  const beatCount = Math.round(beatsPerMeasure);
+  const dur = beatsToDuration(beatsPerMeasure / beatCount);
+  const durStr = durationToAlphaTex(dur);
+  const parts: string[] = [];
+
+  for (let bi = 0; bi < beatCount; bi++) {
+    const beatPos = bi * (beatsPerMeasure / beatCount);
+    const frets = getChordAtBeat(beatPos, timeline);
+    const props: string[] = [];
+    const cc = findChordChangeAt(beatPos, beatsPerMeasure / beatCount, timeline);
+    if (cc) props.push(`ch "${cc.chordId}"`);
 
     if (!frets) {
-      // 无和弦可用 → 休止
-      parts.push(`r.${durationToAlphaTex(beat.duration)}`);
-      beatOffset += beatBeats;
+      const propsStr = wrapProps(props);
+      parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
       continue;
     }
 
-    // 有节奏型 → 展开
-    if (rhythm && rhythm.slots.length > 0) {
-      parts.push(generateBeatWithRhythm(frets, rhythm, beatBeats, ts, beatOffset));
-    } else {
-      // 无节奏型 → 简单和弦
-      parts.push(generateSimpleChord(frets, beat.duration));
-    }
-
-    beatOffset += beatBeats;
+    const root = findRootNote(frets);
+    const noteTex = notesToAlphaTex([root]);
+    const propsStr = wrapProps(props);
+    parts.push(propsStr ? `${noteTex}.${durStr} ${propsStr}` : `${noteTex}.${durStr}`);
   }
 
   return parts.join(' ');
 }
 
-/**
- * 在一个 Beat 的时值内展开节奏型
- *
- * 节奏型是为完整小节设计的。每个 beat 根据在小节中的位置截取对应 slot 区间。
- */
-function generateBeatWithRhythm(
+
+// ============================================================
+// Slot → Notes
+// ============================================================
+
+function slotToNotes(
+  slot: RhythmSlot,
   frets: GuitarFrets,
-  rhythm: RhythmPattern,
-  beatDuration: number,
-  ts: { numerator: number; denominator: number },
-  beatOffset: number,
-): string {
-  const totalSlots = rhythm.slots.length;
-  const totalBeats = ts.numerator;
-  const beatsPerSlot = totalBeats / totalSlots;
-
-  // 当前 beat 使用多少 slot
-  let slotsForBeat = Math.round(beatDuration / beatsPerSlot);
-  slotsForBeat = Math.max(1, Math.min(slotsForBeat, totalSlots));
-
-  // slot 起始偏移
-  let slotOffset = Math.round(beatOffset / beatsPerSlot);
-  slotOffset = Math.max(0, Math.min(slotOffset, totalSlots - 1));
-
-  // 不越界
-  if (slotOffset + slotsForBeat > totalSlots) {
-    slotsForBeat = totalSlots - slotOffset;
-  }
-
-  const slicedSlots = rhythm.slots.slice(slotOffset, slotOffset + slotsForBeat);
-  const events = expandRhythm(rhythm.type, slicedSlots, frets);
-
-  // slot 时值
-  const slotDur = beatsToDuration(beatsPerSlot);
-
-  return eventsToAlphaTex(events, slotDur);
-}
-
-/**
- * NoteEvent[] → AlphaTex
- */
-function eventsToAlphaTex(events: NoteEvent[], duration: DurationValue): string {
-  const parts: string[] = [];
-  const durStr = durationToAlphaTex(duration);
-  parts.push(`:${durStr}`);
-
-  let lastNoteTex: string | null = null;
-
-  for (const event of events) {
-    if (event.isRest) {
-      parts.push('r');
-      lastNoteTex = null;
-      continue;
+): { notes: Note[]; brush?: string } {
+  if (slot.kind === 'pluck') {
+    if (slot.target === 'root') {
+      return { notes: [findRootNote(frets)] };
     }
-    if (event.isSustain) {
-      if (lastNoteTex) {
-        parts.push(`${lastNoteTex} {t}`);
-      } else {
-        parts.push('r');
+    const notes: Note[] = [];
+    for (const s of slot.strings) {
+      const idx = 6 - s;
+      if (idx >= 0 && idx < frets.length && frets[idx] >= 0) {
+        notes.push({ string: s, fret: frets[idx] });
       }
-      continue;
     }
-    const noteTex = notesToAlphaTex(event.notes);
-    lastNoteTex = noteTex;
-    if (event.isDeadNote) {
-      parts.push(`${noteTex} {x}`);
-    } else if (event.brushDirection) {
-      const brush = event.brushDirection === 'down' ? '{bd}' : '{bu}';
-      parts.push(`${noteTex} ${brush}`);
-    } else {
-      parts.push(noteTex);
-    }
+    return { notes: notes.length > 0 ? notes : [findRootNote(frets)] };
   }
 
-  return parts.join(' ');
+  if (slot.kind === 'strum') {
+    if (slot.action === 'sustain') return { notes: [] };
+    const all = getAllPlayable(frets);
+    if (slot.action === 'down') return { notes: all, brush: 'bd' };
+    if (slot.action === 'up') return { notes: all, brush: 'bu' };
+    if (slot.action === 'mute') return { notes: all, brush: 'ds' };
+    return { notes: all };
+  }
+
+  return { notes: [findRootNote(frets)] };
 }
 
-/**
- * 简单和弦（无节奏型 fallback）
- */
-function generateSimpleChord(frets: GuitarFrets, dur: DurationValue): string {
-  const notes: string[] = [];
-  for (let i = 0; i < frets.length; i++) {
-    if (frets[i] >= 0) {
-      notes.push(`${frets[i]}.${6 - i}`);
-    }
+// ============================================================
+// 查找辅助
+// ============================================================
+
+function getChordAtBeat(beatPos: number, timeline: MeasureTimeline): GuitarFrets | null {
+  let found: GuitarFrets | null = null;
+  for (const cc of timeline.chordChanges) {
+    if (cc.beatPos <= beatPos + 0.001) found = cc.frets;
   }
-  const durStr = durationToAlphaTex(dur);
-  if (notes.length === 0) return `r.${durStr}`;
-  return `(${notes.join(' ')}).${durStr} {bd}`;
+  return found ?? timeline.inheritedFrets;
+}
+
+function findChordChangeAt(
+  beatPos: number, slotDuration: number, timeline: MeasureTimeline,
+): ChordChange | null {
+  for (const cc of timeline.chordChanges) {
+    if (cc.beatPos >= beatPos - 0.001 && cc.beatPos < beatPos + slotDuration - 0.001) return cc;
+  }
+  return null;
+}
+
+// ============================================================
+// 工具函数
+// ============================================================
+
+function findRootNote(frets: GuitarFrets): Note {
+  for (let i = 0; i < frets.length; i++) {
+    if (frets[i] >= 0) return { string: 6 - i, fret: frets[i] };
+  }
+  return { string: 6, fret: 0 };
+}
+
+function getAllPlayable(frets: GuitarFrets): Note[] {
+  const notes: Note[] = [];
+  for (let i = 0; i < frets.length; i++) {
+    if (frets[i] >= 0) notes.push({ string: 6 - i, fret: frets[i] });
+  }
+  return notes;
+}
+
+function wrapProps(props: string[]): string {
+  return props.length > 0 ? `{${props.join(' ')}}` : '';
 }

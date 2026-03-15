@@ -19,9 +19,12 @@ let sqlPromise: ReturnType<typeof initSqlJs> | null = null;
  */
 async function initWasm() {
   if (!sqlPromise) {
-    sqlPromise = initSqlJs({
-      locateFile: (file: string) => `https://sql.js.org/dist/${file}`,
-    });
+    sqlPromise = (async () => {
+      // 手动 fetch wasm 二进制，避免 sql.js 内部 locateFile 路径问题
+      const wasmResp = await fetch('/sql-wasm.wasm');
+      const wasmBinary = await wasmResp.arrayBuffer();
+      return initSqlJs({ wasmBinary });
+    })();
   }
   return sqlPromise;
 }
@@ -100,6 +103,22 @@ export async function getDb(): Promise<Database> {
   // 建表（IF NOT EXISTS，幂等）
   for (const ddl of SCHEMA_DDL) {
     db.run(ddl);
+  }
+
+  // ---- Schema 迁移: 为旧数据库添加新列 ----
+  const migrations: Array<{ table: string; column: string; type: string }> = [
+    { table: 'chords', column: 'positions_json', type: 'TEXT' },
+    { table: 'chords', column: 'midi_json', type: 'TEXT' },
+    { table: 'chords', column: 'chord_key', type: 'TEXT' },
+    { table: 'chords', column: 'suffix', type: 'TEXT' },
+  ];
+
+  for (const m of migrations) {
+    try {
+      db.run(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.type}`);
+    } catch {
+      // 列已存在，忽略（SQLite ALTER TABLE ADD COLUMN 重复会报错）
+    }
   }
 
   return db;

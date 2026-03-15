@@ -4,6 +4,7 @@
  * 功能: TMD 源码编辑、错误/警告详情展示
  */
 import { useRef, useCallback, useEffect, useState } from 'react';
+import { FileText, CircleX, TriangleAlert, CircleCheck } from 'lucide-react';
 import type { PipelineError, PipelineWarning } from '../../core/pipeline';
 
 interface EditorPaneProps {
@@ -38,7 +39,7 @@ export function EditorPane({ source, onChange, errors, warnings }: EditorPanePro
   return (
     <div className="editor-pane">
       <div className="pane-toolbar">
-        <span className="pane-title">📝 TabMarkdown</span>
+        <span className="pane-title"><FileText size={13} /> TabMarkdown</span>
         <div className="editor-status">
           {hasErrors && (
             <button
@@ -46,7 +47,7 @@ export function EditorPane({ source, onChange, errors, warnings }: EditorPanePro
               onClick={() => setShowDiagnostics(!showDiagnostics)}
               title={errors.map(e => e.message).join('\n')}
             >
-              ❌ {errors.length}
+              <CircleX size={12} /> {errors.length}
             </button>
           )}
           {hasWarnings && (
@@ -55,10 +56,10 @@ export function EditorPane({ source, onChange, errors, warnings }: EditorPanePro
               onClick={() => setShowDiagnostics(!showDiagnostics)}
               title={warnings.map(w => w.message).join('\n')}
             >
-              ⚠️ {warnings.length}
+              <TriangleAlert size={12} /> {warnings.length}
             </button>
           )}
-          {!hasDiagnostics && <span className="status-ok">✅</span>}
+          {!hasDiagnostics && <span className="status-ok"><CircleCheck size={12} /></span>}
         </div>
       </div>
 

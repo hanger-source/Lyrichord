@@ -19,6 +19,10 @@ export const SCHEMA_DDL: string[] = [
     root_string INTEGER,
     is_slash    INTEGER DEFAULT 0,
     bass_note   TEXT,
+    positions_json TEXT,
+    midi_json   TEXT,
+    chord_key   TEXT,
+    suffix      TEXT,
     source      TEXT NOT NULL DEFAULT 'builtin',
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
