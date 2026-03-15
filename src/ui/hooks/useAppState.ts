@@ -1,19 +1,39 @@
 /**
  * 全局应用状态
  *
- * 管理: TMD 源码、管线结果、播放状态、侧边栏、当前吉他谱 ID、DB 状态
+ * 管理: 当前项目、TMD 源码、管线结果、播放状态、侧边栏、DB 状态
+ *
+ * 项目（Score）是全局概念：
+ *   - TMD 模式编辑的是项目的 TMD 源码（score_versions）
+ *   - TAB 模式编辑的是项目的段落（tab_segments）
+ *   - 切换项目 → 两个模式同时切换上下文
  */
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { tmdToAlphaTex, type PipelineResult } from '../../core/pipeline';
-import { saveScore, deleteScore, getVersionById } from '../../db/score-repo';
+import { saveScore, deleteScore, getVersionById, getLatestVersion, getAllScores, type ScoreRecord } from '../../db/score-repo';
 import { bulkUpsertRhythms } from '../../db/rhythm-repo';
 import { upsertChord } from '../../db/chord-repo';
+import { getDb, persist } from '../../db/connection';
 import { initDatabase } from '../../db/init';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
 export type SidebarTab = 'chords' | 'rhythms' | 'scores' | 'tabeditor' | null;
 
+const PROJECT_KEY = 'lyrichord-active-project';
+
+function loadSavedProject(): { id: string | null; title: string } {
+  try {
+    const raw = localStorage.getItem(PROJECT_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.id) return parsed;
+    }
+  } catch {}
+  return { id: null, title: '' };
+}
+
 export function useAppState(initialTmd: string) {
+  const savedProject = useRef(loadSavedProject());
   const [tmdSource, setTmdSourceRaw] = useState(initialTmd);
   const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>('stopped');
@@ -24,7 +44,13 @@ export function useAppState(initialTmd: string) {
     } catch {}
     return null;
   });
-  const [currentScoreId, setCurrentScoreId] = useState<string | null>(null);
+
+  // ---- 全局项目状态 ----
+  const [activeProjectId, setActiveProjectIdRaw] = useState<string | null>(savedProject.current.id);
+  const [activeProjectTitle, setActiveProjectTitle] = useState(savedProject.current.title);
+  const [projects, setProjects] = useState<ScoreRecord[]>([]);
+
+  const [currentScoreId, setCurrentScoreId] = useState<string | null>(savedProject.current.id);
   const [currentVersionId, setCurrentVersionId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [dbReady, setDbReady] = useState(false);
@@ -44,6 +70,27 @@ export function useAppState(initialTmd: string) {
         setDbError(e instanceof Error ? e.message : String(e));
       });
   }, []);
+
+  // 加载项目列表
+  const refreshProjects = useCallback(async () => {
+    try {
+      const list = await getAllScores();
+      setProjects(list);
+      return list;
+    } catch (e) {
+      console.error('加载项目列表失败:', e);
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    if (dbReady) refreshProjects();
+  }, [dbReady, refreshProjects]);
+
+  // 持久化项目选择
+  useEffect(() => {
+    try { localStorage.setItem(PROJECT_KEY, JSON.stringify({ id: activeProjectId, title: activeProjectTitle })); } catch {}
+  }, [activeProjectId, activeProjectTitle]);
 
   const runPipeline = useCallback((source: string) => {
     const result = tmdToAlphaTex(source);
@@ -82,27 +129,33 @@ export function useAppState(initialTmd: string) {
     saveMessageTimer.current = setTimeout(() => setSaveMessage(null), 3000);
   }, []);
 
-  // 保存
+  // 保存 — 关联到当前项目
   const handleSave = useCallback(async () => {
     if (!pipelineResult?.song) return;
     setIsSaving(true);
     try {
       const result = await saveScore({
-        scoreId: currentScoreId ?? undefined,
+        scoreId: activeProjectId ?? undefined,
         tmdSource,
         song: pipelineResult.song,
         description: '手动保存',
       });
+      // 保存后同步项目状态
+      if (!activeProjectId) {
+        setActiveProjectIdRaw(result.scoreId);
+        setActiveProjectTitle(pipelineResult.song.meta.title ?? '未命名');
+      }
       setCurrentScoreId(result.scoreId);
       setCurrentVersionId(result.versionId);
       showSaveMessage(`已保存 v${result.version}`);
+      refreshProjects();
     } catch (e) {
       console.error('保存失败:', e);
       showSaveMessage('保存失败');
     } finally {
       setIsSaving(false);
     }
-  }, [pipelineResult, tmdSource, currentScoreId, showSaveMessage]);
+  }, [pipelineResult, tmdSource, activeProjectId, showSaveMessage, refreshProjects]);
 
   // 加载某个版本
   const loadVersion = useCallback(async (versionId: string) => {
@@ -123,14 +176,111 @@ export function useAppState(initialTmd: string) {
   const handleDeleteScore = useCallback(async (scoreId: string) => {
     try {
       await deleteScore(scoreId);
-      if (currentScoreId === scoreId) {
-        setCurrentScoreId(null);
+      const remaining = await refreshProjects();
+      if (activeProjectId === scoreId) {
+        // 切到剩余的第一个项目
+        if (remaining.length > 0) {
+          const next = remaining[0];
+          setActiveProjectIdRaw(next.id);
+          setActiveProjectTitle(next.title);
+          setCurrentScoreId(next.id);
+        } else {
+          setActiveProjectIdRaw(null);
+          setActiveProjectTitle('');
+          setCurrentScoreId(null);
+        }
         setCurrentVersionId(null);
       }
     } catch (e) {
       console.error('删除失败:', e);
     }
-  }, [currentScoreId]);
+  }, [activeProjectId, refreshProjects]);
+
+  // 切换项目 — 全局，TMD 和 TAB 都跟着切
+  const switchProject = useCallback(async (projectId: string | null, title: string) => {
+    setActiveProjectIdRaw(projectId);
+    setActiveProjectTitle(title);
+    setCurrentScoreId(projectId);
+    setCurrentVersionId(null);
+
+    // 加载该项目最新版本的 TMD
+    if (projectId) {
+      try {
+        const ver = await getLatestVersion(projectId);
+        if (ver) {
+          setCurrentVersionId(ver.id);
+          setTmdSourceRaw(ver.tmdSource);
+          runPipeline(ver.tmdSource);
+          return;
+        }
+      } catch (e) {
+        console.error('加载项目版本失败:', e);
+      }
+    }
+    // 无项目或无版本 → 回到 demo
+    setTmdSourceRaw(initialTmd);
+    runPipeline(initialTmd);
+  }, [initialTmd, runPipeline]);
+
+  // 新建项目
+  const createProject = useCallback(async (title: string) => {
+    try {
+      const db = await getDb();
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      db.run('INSERT INTO scores (id, title) VALUES (?, ?)', [id, title]);
+      await persist();
+      await refreshProjects();
+      // 自动切换到新项目
+      setActiveProjectIdRaw(id);
+      setActiveProjectTitle(title);
+      setCurrentScoreId(id);
+      setCurrentVersionId(null);
+      return id;
+    } catch (e) {
+      console.error('创建项目失败:', e);
+      return null;
+    }
+  }, [refreshProjects]);
+
+  // DB 就绪后：加载活跃项目数据
+  const initialLoadDone = useRef(false);
+  useEffect(() => {
+    if (!dbReady || initialLoadDone.current) return;
+    initialLoadDone.current = true;
+
+    (async () => {
+      const allProjects = await refreshProjects();
+
+      // 如果有保存的项目 ID，直接用
+      if (activeProjectId) {
+        const exists = allProjects.find(p => p.id === activeProjectId);
+        if (exists) {
+          setActiveProjectTitle(exists.title);
+          const ver = await getLatestVersion(activeProjectId);
+          if (ver) {
+            setCurrentVersionId(ver.id);
+            setTmdSourceRaw(ver.tmdSource);
+            runPipeline(ver.tmdSource);
+          }
+          return;
+        }
+      }
+
+      // 没有保存的项目 → 用第一个
+      if (allProjects.length > 0) {
+        const first = allProjects[0];
+        setActiveProjectIdRaw(first.id);
+        setActiveProjectTitle(first.title);
+        setCurrentScoreId(first.id);
+        const ver = await getLatestVersion(first.id);
+        if (ver) {
+          setCurrentVersionId(ver.id);
+          setTmdSourceRaw(ver.tmdSource);
+          runPipeline(ver.tmdSource);
+        }
+      }
+    })().catch(console.error);
+  }, [dbReady, activeProjectId, runPipeline, refreshProjects]);
 
   const toggleSidebar = useCallback((tab: SidebarTab) => {
     setSidebarTab(prev => {
@@ -145,6 +295,14 @@ export function useAppState(initialTmd: string) {
     pipelineResult,
     playbackState,
     sidebarTab,
+    // 全局项目
+    activeProjectId,
+    activeProjectTitle,
+    projects,
+    switchProject,
+    createProject,
+    refreshProjects,
+    // 版本
     currentScoreId,
     currentVersionId,
     isSaving,

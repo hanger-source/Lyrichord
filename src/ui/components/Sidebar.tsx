@@ -3,7 +3,7 @@
  *
  * 使用 Radix UI 组件: Tabs, Tooltip, ScrollArea
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import {
@@ -36,33 +36,42 @@ interface SidebarProps {
   onHighlightClear?: () => void;
 }
 
-export function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear }: SidebarProps) {
   return (
     <Tooltip.Provider delayDuration={300}>
       <aside className="sidebar">
-        {tab === 'chords' && <ChordPanel song={song} onChordPick={onChordPick} highlightChord={highlightChord} onHighlightClear={onHighlightClear} />}
-        {tab !== 'chords' && (
+        <div style={{ display: tab === 'chords' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
+          <ChordPanel song={song} onChordPick={onChordPick} highlightChord={highlightChord} onHighlightClear={onHighlightClear} />
+        </div>
+        <div style={{ display: tab === 'rhythms' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
           <ScrollArea.Root className="sidebar-scroll-root">
             <ScrollArea.Viewport className="sidebar-scroll-viewport">
-              {tab === 'rhythms' && <RhythmPanel song={song} />}
-              {tab === 'scores' && (
-                <ScorePanel
-                  currentScoreId={currentScoreId}
-                  onSelectScore={onSelectScore}
-                  onDeleteScore={onDeleteScore}
-                  onLoadVersion={onLoadVersion}
-                />
-              )}
+              <RhythmPanel song={song} />
             </ScrollArea.Viewport>
             <ScrollArea.Scrollbar className="sidebar-scrollbar" orientation="vertical">
               <ScrollArea.Thumb className="sidebar-scrollbar-thumb" />
             </ScrollArea.Scrollbar>
           </ScrollArea.Root>
-        )}
+        </div>
+        <div style={{ display: tab === 'scores' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
+          <ScrollArea.Root className="sidebar-scroll-root">
+            <ScrollArea.Viewport className="sidebar-scroll-viewport">
+              <ScorePanel
+                currentScoreId={currentScoreId}
+                onSelectScore={onSelectScore}
+                onDeleteScore={onDeleteScore}
+                onLoadVersion={onLoadVersion}
+              />
+            </ScrollArea.Viewport>
+            <ScrollArea.Scrollbar className="sidebar-scrollbar" orientation="vertical">
+              <ScrollArea.Thumb className="sidebar-scrollbar-thumb" />
+            </ScrollArea.Scrollbar>
+          </ScrollArea.Root>
+        </div>
       </aside>
     </Tooltip.Provider>
   );
-}
+});
 
 
 // ============================================================
@@ -84,7 +93,7 @@ function extractRoot(id: string): string {
   return m ? m[1] : '?';
 }
 
-function ChordPanel({ song, onChordPick, highlightChord, onHighlightClear }: { song: Song | null; onChordPick?: (name: string) => void; highlightChord?: string | null; onHighlightClear?: () => void }) {
+const ChordPanel = memo(function ChordPanel({ song, onChordPick, highlightChord, onHighlightClear }: { song: Song | null; onChordPick?: (name: string) => void; highlightChord?: string | null; onHighlightClear?: () => void }) {
   const [viewMode, setViewMode] = useState<'current' | 'library'>('library');
   const [searchQuery, setSearchQuery] = useState('');
   const [libraryChords, setLibraryChords] = useState<ChordDefinition[]>([]);
@@ -274,7 +283,7 @@ function ChordPanel({ song, onChordPick, highlightChord, onHighlightClear }: { s
       </div>{/* chord-panel-scroll end */}
     </div>
   );
-}
+});
 
 function ChordCardDef({ chord, onPick, highlight, onHighlightClear }: { chord: ChordDefinition; onPick?: (name: string) => void; highlight?: boolean; onHighlightClear?: () => void }) {
   const [selectedPos, setSelectedPos] = useState(0);
@@ -346,7 +355,7 @@ function ChordCardDef({ chord, onPick, highlight, onHighlightClear }: { chord: C
 //  节奏型面板
 // ============================================================
 
-function RhythmPanel({ song }: { song: Song | null }) {
+const RhythmPanel = memo(function RhythmPanel({ song }: { song: Song | null }) {
   const rhythms = song ? Array.from(song.rhythmLibrary.values()) : [];
 
   return (
@@ -366,7 +375,7 @@ function RhythmPanel({ song }: { song: Song | null }) {
       )}
     </div>
   );
-}
+});
 
 function RhythmCard({ rhythm }: { rhythm: RhythmPattern }) {
   const [expanded, setExpanded] = useState(false);
@@ -457,7 +466,7 @@ function getCellModifier(slot: RhythmSlot): string {
 //  吉他谱面板
 // ============================================================
 
-function ScorePanel({ currentScoreId, onSelectScore, onDeleteScore, onLoadVersion }: {
+const ScorePanel = memo(function ScorePanel({ currentScoreId, onSelectScore, onDeleteScore, onLoadVersion }: {
   currentScoreId: string | null;
   onSelectScore: (id: string, tmd: string) => void;
   onDeleteScore: (id: string) => Promise<void>;
@@ -575,7 +584,7 @@ function ScorePanel({ currentScoreId, onSelectScore, onDeleteScore, onLoadVersio
       )}
     </div>
   );
-}
+});
 
 // ============================================================
 //  工具函数

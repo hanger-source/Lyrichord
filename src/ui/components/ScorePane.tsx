@@ -3,7 +3,7 @@
  *
  * AlphaTab 自己管理 DOM，React 通过 ref 挂载容器。
  */
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, memo } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import { Play, Pause, Square, SkipBack, Loader } from 'lucide-react';
 import { initChordTooltip, destroyChordTooltip } from '../chord-tooltip';
@@ -27,7 +27,7 @@ function formatTime(ms: number): string {
   return `${min}:${sec.toString().padStart(2, '0')}`;
 }
 
-export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange, colors, visible = true }: ScorePaneProps) {
+export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange, colors, visible = true }: ScorePaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<alphaTab.AlphaTabApi | null>(null);
   const lastTexRef = useRef('');
@@ -36,6 +36,11 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
   const [playerReady, setPlayerReady] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [totalTime, setTotalTime] = useState(0);
+  // 播放中标记 — 用 ref 避免闭包过期，IntersectionObserver 回调里能拿到最新值
+  const isPlayingRef = useRef(false);
+  // 播放进度用 ref 缓冲 + rAF 节流，避免高频 setState 阻塞主线程
+  const pendingTimeRef = useRef<{ current: number; end: number } | null>(null);
+  const rafIdRef = useRef(0);
 
   // 初始化 AlphaTab
   useEffect(() => {
@@ -97,29 +102,42 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
 
     api.playerStateChanged.on(e => {
       if (e.state === alphaTab.synth.PlayerState.Playing) {
+        isPlayingRef.current = true;
         onPlaybackStateChange('playing');
       } else {
+        isPlayingRef.current = false;
         onPlaybackStateChange('paused');
       }
     });
 
     api.playerFinished.on(() => {
+      isPlayingRef.current = false;
       onPlaybackStateChange('stopped');
       setCurrentTime(0);
     });
 
-    // 播放进度
+    // 播放进度 — 用 rAF 节流，避免高频 setState
     api.playerPositionChanged.on(e => {
-      setCurrentTime(e.currentTime);
-      setTotalTime(e.endTime);
+      pendingTimeRef.current = { current: e.currentTime, end: e.endTime };
+      if (!rafIdRef.current) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          rafIdRef.current = 0;
+          if (pendingTimeRef.current) {
+            setCurrentTime(pendingTimeRef.current.current);
+            setTotalTime(pendingTimeRef.current.end);
+            pendingTimeRef.current = null;
+          }
+        });
+      }
     });
 
     initChordTooltip(containerRef.current);
 
     // 容器重新可见时触发重新渲染（解决 display:none 后恢复白屏）
+    // 播放中跳过，避免 re-render 阻塞主线程导致音频卡顿
     const observer = new IntersectionObserver(entries => {
       for (const entry of entries) {
-        if (entry.isIntersecting && apiRef.current) {
+        if (entry.isIntersecting && apiRef.current && !isPlayingRef.current) {
           apiRef.current.render();
         }
       }
@@ -128,6 +146,7 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
 
     return () => {
       observer.disconnect();
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
       destroyChordTooltip();
       api.destroy();
       apiRef.current = null;
@@ -148,14 +167,16 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
   }, [pipelineResult]);
 
   // visible 从 false→true 时重新渲染（解决 display:none 后恢复白屏）
+  // 播放中跳过
   const prevVisibleRef = useRef(visible);
   useEffect(() => {
     const wasHidden = !prevVisibleRef.current;
     prevVisibleRef.current = visible;
-    if (wasHidden && visible && apiRef.current) {
-      // 短延迟等 DOM 布局完成后再 render
+    if (wasHidden && visible && apiRef.current && !isPlayingRef.current) {
       requestAnimationFrame(() => {
-        apiRef.current?.render();
+        if (apiRef.current && !isPlayingRef.current) {
+          apiRef.current.render();
+        }
       });
     }
   }, [visible]);
@@ -280,4 +301,4 @@ export function ScorePane({ pipelineResult, playbackState, onPlaybackStateChange
       <div ref={containerRef} className="alphatab-container" />
     </div>
   );
-}
+});

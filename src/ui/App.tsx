@@ -80,6 +80,16 @@ export function App() {
     setChordToApply(null);
   }, []);
 
+  // 稳定引用 — 避免破坏 Sidebar/ScorePane 的 memo
+  const handleSidebarSelectScore = useCallback((id: string, tmd: string) => {
+    state.switchProject(id, '');
+    state.setTmdSource(tmd);
+  }, [state.switchProject, state.setTmdSource]);
+
+  const handleHighlightClear = useCallback(() => {
+    setHighlightChord(null);
+  }, []);
+
   if (state.dbError) {
     return (
       <div className="app-root">
@@ -95,19 +105,21 @@ export function App() {
   return (
     <div className="app-root">
       <Header
-        onSave={state.handleSave}
-        isSaving={state.isSaving}
         sidebarTab={state.sidebarTab}
         onToggleSidebar={state.setSidebarTab}
         saveMessage={state.saveMessage}
         dbReady={state.dbReady}
-        currentScoreId={state.currentScoreId}
         editorCollapsed={editorCollapsed}
         onToggleEditor={() => setEditorCollapsed(!editorCollapsed)}
         editorMode={editorMode}
         onSetEditorMode={setEditorModeAndSave}
         isDark={activeColors === darkColors}
         onToggleTheme={toggleTheme}
+        activeProjectId={state.activeProjectId}
+        activeProjectTitle={state.activeProjectTitle}
+        projects={state.projects}
+        onSwitchProject={state.switchProject}
+        onCreateProject={state.createProject}
       />
       <div className="main-layout">
         {!editorCollapsed && editorMode === 'tmd' && (
@@ -119,8 +131,9 @@ export function App() {
           />
         )}
         {!editorCollapsed && editorMode === 'tab' && (
-          <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
+          <div style={{ flex: '1 1 0', overflow: 'hidden', display: 'flex', minWidth: 0 }}>
             <TabWorkspace
+              projectId={state.activeProjectId}
               onTmdChange={handleTabTmdChange}
               onChordSelectionStart={handleChordSelectionStart}
               chordToApply={chordToApply}
@@ -132,7 +145,7 @@ export function App() {
           </div>
         )}
         {/* TMD 模式曲谱 — 始终挂载，用 display 控制可见性 */}
-        <div style={{ display: editorMode !== 'tab' ? 'flex' : 'none', flex: 1, overflow: 'hidden', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ display: editorMode !== 'tab' ? 'flex' : 'none', flex: '1 1 0', overflow: 'hidden', flexDirection: 'column', minWidth: 0 }}>
           <ScorePane
             pipelineResult={state.pipelineResult}
             playbackState={state.playbackState}
@@ -151,22 +164,19 @@ export function App() {
             visible={editorMode === 'tab' && tabPreviewOpen}
           />
         </div>
-        {state.sidebarTab && (
+        <div style={{ display: state.sidebarTab ? 'flex' : 'none' }}>
           <Sidebar
-            tab={state.sidebarTab}
+            tab={state.sidebarTab ?? 'chords'}
             song={state.pipelineResult?.song ?? null}
             currentScoreId={state.currentScoreId}
-            onSelectScore={(id, tmd) => {
-              state.setCurrentScoreId(id);
-              state.setTmdSource(tmd);
-            }}
+            onSelectScore={handleSidebarSelectScore}
             onDeleteScore={state.handleDeleteScore}
             onLoadVersion={state.loadVersion}
             onChordPick={editorMode === 'tab' ? handleChordPicked : undefined}
             highlightChord={highlightChord}
-            onHighlightClear={() => setHighlightChord(null)}
+            onHighlightClear={handleHighlightClear}
           />
-        )}
+        </div>
       </div>
     </div>
   );

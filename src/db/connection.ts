@@ -83,7 +83,7 @@ async function saveToIDB(data: Uint8Array): Promise<void> {
  * 首次调用时：
  * 1. 初始化 sql.js WASM
  * 2. 尝试从 IndexedDB 加载已有数据库
- * 3. 运行迁移
+ * 3. 建表（IF NOT EXISTS）
  */
 export async function getDb(): Promise<Database> {
   if (db) return db;
@@ -99,28 +99,6 @@ export async function getDb(): Promise<Database> {
 
   // 启用外键约束
   db.run('PRAGMA foreign_keys = ON');
-
-  // ---- Schema 迁移: 为旧数据库添加新列 ----
-  // 必须在 DDL 之前执行，否则 CREATE INDEX 引用新列会失败
-  const migrations: Array<{ table: string; column: string; type: string; dflt?: string }> = [
-    { table: 'chords', column: 'positions_json', type: 'TEXT' },
-    { table: 'chords', column: 'midi_json', type: 'TEXT' },
-    { table: 'chords', column: 'chord_key', type: 'TEXT' },
-    { table: 'chords', column: 'suffix', type: 'TEXT' },
-    { table: 'tab_segments', column: 'project_id', type: 'TEXT' },
-    { table: 'tab_segments', column: 'bpm', type: 'INTEGER', dflt: '8' },
-    { table: 'tab_segments', column: 'ts_label', type: 'TEXT', dflt: "'4/4'" },
-    { table: 'tab_segments', column: 'sort_order', type: 'INTEGER', dflt: '0' },
-  ];
-
-  for (const m of migrations) {
-    try {
-      const dflt = m.dflt ? ` DEFAULT ${m.dflt}` : '';
-      db.run(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.type}${dflt}`);
-    } catch {
-      // 列已存在或表不存在，忽略
-    }
-  }
 
   // 建表 + 索引（IF NOT EXISTS，幂等）
   for (const ddl of SCHEMA_DDL) {
