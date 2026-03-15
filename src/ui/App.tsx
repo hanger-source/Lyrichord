@@ -10,7 +10,7 @@ import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { EditorPane } from './components/EditorPane';
 import { ScorePane } from './components/ScorePane';
-import { TabEditor } from './components/TabEditor';
+import { TabWorkspace } from './components/TabWorkspace';
 import type { ChordSelectionPending } from './components/TabEditor';
 import { applyTheme, lightColors, darkColors, layout } from './theme';
 import type { ColorTokens } from './theme';
@@ -120,7 +120,7 @@ export function App() {
         )}
         {!editorCollapsed && editorMode === 'tab' && (
           <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
-            <TabEditor
+            <TabWorkspace
               onTmdChange={handleTabTmdChange}
               onChordSelectionStart={handleChordSelectionStart}
               chordToApply={chordToApply}

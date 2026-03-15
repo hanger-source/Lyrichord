@@ -46,4 +46,18 @@ export const darkColors: ColorTokens = {
   chordFinger3: '#fbbf24',
   chordFinger4: '#fb7185',
   chordDotDefault: '#e2e8f0',
+
+  // TAB 编辑器
+  beatGroupA: 'rgba(96, 165, 250, 0.10)',
+  beatGroupB: 'rgba(251, 191, 36, 0.08)',
+  beatSelBg: 'rgba(96, 165, 250, 0.22)',
+  beatGroupBorder: 'rgba(255, 255, 255, 0.10)',
+  splitColor: 'rgba(167, 139, 250, 0.60)',
+  splitBg: 'rgba(167, 139, 250, 0.16)',
+  splitBgAlt: 'rgba(167, 139, 250, 0.10)',
+  splitDash: 'rgba(167, 139, 250, 0.35)',
+  mergeColor: 'rgba(52, 211, 153, 0.60)',
+  mergeBg: 'rgba(52, 211, 153, 0.16)',
+  mergeBgAlt: 'rgba(52, 211, 153, 0.10)',
+  mergeBar: 'rgba(52, 211, 153, 0.45)',
 };
