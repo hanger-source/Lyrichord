@@ -160,6 +160,31 @@ export function generate(song: Song): AlphaTexOutput {
   // ---- 组装最终 AlphaTex ----
   const lines = [...headerLines];
 
+  // ── \chord 指令 — 和弦指法图 ────────────────────────────
+  // 收集所有用到的和弦，用 \chord 语法定义指法数据。
+  // AlphaTab 会在谱面开头渲染指法图（showDiagram=true）。
+  // 格式: \chord "Am" 1弦 2弦 3弦 4弦 5弦 6弦
+  //   AlphaTab 参数顺序: 1弦(高E) → 6弦(低E)，与 GuitarFrets 相反
+  //   -1=不弹, 0=空弦, N=品位(绝对)
+  const chordsSeen = new Set<string>();
+  for (const bar of song.bars) {
+    if (!bar) continue;
+    for (const beat of bar.beats) {
+      if (beat.chordId && !chordsSeen.has(beat.chordId)) {
+        chordsSeen.add(beat.chordId);
+        const frets = resolveFrets(beat.chordId, song);
+        if (frets) {
+          // AlphaTab \chord 参数顺序: 1弦(高E) → 6弦(低E)
+          // GuitarFrets 索引顺序: [0]=6弦(低E) → [5]=1弦(高E)
+          // 所以需要反转数组
+          const reversed = [...frets].reverse();
+          const fretsStr = reversed.map(f => f < 0 ? -1 : f).join(' ');
+          lines.push(`\\chord "${beat.chordId}" ${fretsStr}`);
+        }
+      }
+    }
+  }
+
   // 歌词指令 (如果有非空歌词)
   const hasLyrics = allLyricWords.some(w => w !== '-');
   if (hasLyrics) {
