@@ -19,6 +19,26 @@
 import { useState, useCallback } from 'react';
 import { getDb, persist } from '../../db/connection';
 
+// ---- 导出辅助 ----
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
+function queryAllRows(db: import('sql.js').Database, sql: string): Record<string, unknown>[] {
+  const stmt = db.prepare(sql);
+  const rows: Record<string, unknown>[] = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+
 interface DbStatus {
   totalSegments: number;
   orphanSegments: number;
@@ -107,6 +127,47 @@ export function DbToolsPanel() {
     }
   }, [checkStatus]);
 
+  const exportSqlite = useCallback(async () => {
+    setLoading(true);
+    try {
+      const db = await getDb();
+      const data = db.export();
+      const blob = new Blob([data], { type: 'application/x-sqlite3' });
+      const ts = new Date().toISOString().slice(0, 10);
+      downloadBlob(blob, `lyrichord-${ts}.db`);
+      setLog('SQLite 数据库已导出');
+    } catch (e) {
+      setLog('导出失败: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const exportJson = useCallback(async () => {
+    setLoading(true);
+    try {
+      const db = await getDb();
+      const dump: Record<string, unknown[]> = {
+        scores: queryAllRows(db, 'SELECT * FROM scores'),
+        score_versions: queryAllRows(db, 'SELECT * FROM score_versions'),
+        tab_segments: queryAllRows(db, 'SELECT * FROM tab_segments'),
+        chords: queryAllRows(db, 'SELECT * FROM chords'),
+        rhythm_patterns: queryAllRows(db, 'SELECT * FROM rhythm_patterns'),
+        score_chords: queryAllRows(db, 'SELECT * FROM score_chords'),
+        score_rhythms: queryAllRows(db, 'SELECT * FROM score_rhythms'),
+      };
+      const json = JSON.stringify(dump, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const ts = new Date().toISOString().slice(0, 10);
+      downloadBlob(blob, `lyrichord-${ts}.json`);
+      setLog(`JSON 已导出 (${Object.values(dump).reduce((s, a) => s + a.length, 0)} 条记录)`);
+    } catch (e) {
+      setLog('导出失败: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13 }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -121,6 +182,15 @@ export function DbToolsPanel() {
         <button className="btn-tiny" onClick={runSchemaMigrations} disabled={loading}
           style={{ padding: '4px 12px', fontSize: 13 }}>
           升级表结构
+        </button>
+        <span style={{ width: 1, background: 'var(--border)', margin: '0 2px' }} />
+        <button className="btn-tiny" onClick={exportSqlite} disabled={loading}
+          style={{ padding: '4px 12px', fontSize: 13 }}>
+          导出 SQLite
+        </button>
+        <button className="btn-tiny" onClick={exportJson} disabled={loading}
+          style={{ padding: '4px 12px', fontSize: 13 }}>
+          导出 JSON
         </button>
       </div>
 
