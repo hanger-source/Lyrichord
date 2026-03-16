@@ -128,7 +128,9 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
     apiRef.current = api;
 
     // ── monkey-patch loadMidiForScore ──────────────────────
-    // MIDI 生成前临时恢复 isDead=false，生成后改回 true。
+    // 必须在 scoreLoaded 之前 patch，因为 AlphaTab 内部时序:
+    //   scoreLoaded → loadMidiForScore(同步) → render(序列化到Worker)
+    // patch 通过 scoreRef 延迟读取 score，所以 patch 时 score 还没加载也没关系。
     // 详见 src/core/post-process/score-post-process.ts
     patchLoadMidiForScore(api, scoreRef);
 
@@ -144,6 +146,10 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
       console.error('AlphaTab error:', e);
     });
 
+    // ── scoreLoaded: 后处理 score model ────────────────────
+    // 时序关键: scoreLoaded 在 loadMidiForScore 之前触发，
+    // 所以这里改的 isDead/isLetRing 会被 MIDI 生成和渲染都看到。
+    // showXMarksRef 用 ref 而不是 state，避免闭包捕获过期值。
     api.scoreLoaded.on((score: any) => {
       if (!score) return;
       scoreRef.current = score;
@@ -242,6 +248,10 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
   }, [visible]);
 
   // x 标记开关切换 → 重新处理 score model 并 re-render
+  // 不需要重新加载 tex，直接在已有 score model 上切换 isDead 状态，
+  // 然后 api.render() 会重新序列化 score 到 Worker 渲染。
+  // MIDI patch 会根据 _origFret 是否存在来判断是否需要恢复，
+  // 所以关闭 x 后 revertXMarks 删除了 _origFret，MIDI patch 就不会干预。
   useEffect(() => {
     showXMarksRef.current = showXMarks;
     try { localStorage.setItem('lyrichord-x-marks', showXMarks ? '1' : '0'); } catch {}

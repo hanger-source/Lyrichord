@@ -6,9 +6,63 @@
  *
  * 职责:
  *   1. x 品位标记 — 和弦指法上的 note 设 isDead=true 显示 x
- *   2. let ring 注入 — 非 dead/palm-mute 的 note 设 isLetRing=true
+ *   2. let ring 注入 — 所有非 dead/palm-mute 的 note 设 isLetRing=true
  *   3. 和弦图设置 — firstFret 自动计算、showFingering、显示位置
  *   4. loadMidiForScore patch — MIDI 生成时临时恢复 isDead=false
+ *
+ * ── 关键发现（探索过程中踩过的坑） ──────────────────────────
+ *
+ * 1. note.string 编号方向与 chord.strings 相反:
+ *    - chord.strings[0] = 1弦(高E), chord.strings[5] = 6弦(低E)
+ *    - note.string = 1 = 6弦(低E), note.string = 6 = 1弦(高E)
+ *    - 映射公式: chord.strings[si] 对应 note.string = numStrings - si
+ *    - 这是因为 AlphaTex 里弦号从低到高(1=低E)，但 \chord 指法从高到低
+ *
+ * 2. AlphaTab 内部时序 (_internalRenderTracks):
+ *    scoreLoaded → loadMidiForScore(同步) → render(序列化到 Worker)
+ *    - scoreLoaded 里改 model → MIDI 和渲染都能看到
+ *    - 渲染在 Web Worker 里，score 通过 JsonConverter.scoreToJsObject 序列化
+ *    - 所以 isDead 在 scoreLoaded 里设置后，Worker 渲染时能读到
+ *
+ * 3. isDead=true 的副作用:
+ *    - 渲染: TAB 谱上显示 x 而不是品位数字 ✓
+ *    - MIDI: dead note 不发声（静音）✗ — 需要 monkey-patch loadMidiForScore
+ *    - 解决: MIDI 生成前临时恢复 isDead=false + 原始 fret，生成后改回
+ *
+ * 4. let ring 必须在 x 标记之前或同时设置:
+ *    - 被标记为 x 的 note 也需要 isLetRing=true（MIDI 播放时恢复了正常 fret）
+ *    - 之前的 bug: x 标记后 continue 跳过了 isLetRing，导致余音效果丢失
+ *
+ * 5. 为什么不用 AlphaTex {lr} 语法:
+ *    - 每个音符都要加 {lr}，文本膨胀严重
+ *    - scoreLoaded 回调直接改 model 更干净
+ *
+ * 6. 为什么不用 SustainPedalMarker:
+ *    - AlphaTab 的 SustainPedalMarker 构造函数未导出为公开 API
+ *    - 运行时报 "not a constructor" 错误
+ *
+ * 7. 之前失败的 x 标记方案:
+ *    - {slashed} 属性 — 不是用户要的效果（斜杠音符头，不是 x）
+ *    - DOM 替换 — 渲染在 Worker 里，坐标匹配不上
+ *    - renderFinished 里改 isDead — MIDI 已经生成了，来不及
+ *
+ * 8. x 标记开关（enableXMarks）:
+ *    - 可以在运行时切换，不需要重新加载 tex
+ *    - 关闭时: revertXMarks 恢复 _origFret → applyLetRingOnly 只设余音
+ *    - 开启时: applyXMarksAndLetRing 重新标记
+ *    - 切换后调用 api.render() 触发重新序列化到 Worker
+ *    - 状态通过 localStorage('lyrichord-x-marks') 持久化
+ *
+ * 9. chord.firstFret 自动计算:
+ *    - AlphaTab \chord 传的是绝对品位，渲染时 fret -= (firstFret-1)
+ *    - 和弦图网格只有 5 格，高把位和弦必须设 firstFret
+ *    - firstFret=1 → 画琴枕粗线，不标品位号
+ *    - firstFret>1 → 不画琴枕，左侧标起始品位号
+ *
+ * 10. \chord 参数顺序:
+ *     - AlphaTex \chord 的 frets 参数: 从1弦(高E)到6弦(低E)
+ *     - 我们的 TMD define [C]: { frets: "x 3 2 0 1 0" } 也是1弦→6弦
+ *     - alphatex.ts 生成时需要 reverse 数组（因为内部存储是6弦→1弦）
  */
 
 // ── 类型（AlphaTab score model 是 any，这里定义最小接口） ──
