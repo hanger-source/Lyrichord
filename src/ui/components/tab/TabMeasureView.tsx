@@ -69,11 +69,17 @@ interface TabMeasureViewProps {
   cellDisplay: (bi: number, si: number) => string;
   // 和弦选中高亮
   activeChord: { mi: number; fromBeat: number } | null;
-  // 小节操作（右键菜单）
+  // 小节操作
+  isMeasureSelected: boolean;
+  onMeasureClick: (shiftKey: boolean, metaKey: boolean) => void;
   onInsertMeasureBefore: () => void;
   onInsertMeasureAfter: () => void;
-  onDeleteMeasure: () => void;
+  onCopyMeasures: () => void;
+  onPasteAfter: () => void;
+  onDeleteMeasures: () => void;
+  hasClipboard: boolean;
   measureCount: number;
+  measureSelCount: number;
 }
 
 export function TabMeasureView({
@@ -84,7 +90,10 @@ export function TabMeasureView({
   onChordClick, onPendingSelClear,
   focusedCell, onStringClick, cellDisplay,
   activeChord,
-  onInsertMeasureBefore, onInsertMeasureAfter, onDeleteMeasure, measureCount,
+  isMeasureSelected, onMeasureClick,
+  onInsertMeasureBefore, onInsertMeasureAfter,
+  onCopyMeasures, onPasteAfter, onDeleteMeasures,
+  hasClipboard, measureCount, measureSelCount,
 }: TabMeasureViewProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const ctxRef = useRef<HTMLDivElement>(null);
@@ -101,11 +110,19 @@ export function TabMeasureView({
 
   const handleBarlineClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    onMeasureClick(e.shiftKey, e.metaKey || e.ctrlKey);
+  }, [onMeasureClick]);
+
+  const handleBarlineContextMenu = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    // 如果当前小节未选中，先选中它
+    if (!isMeasureSelected) onMeasureClick(false, false);
     setCtxMenu({ x: e.clientX, y: e.clientY });
-  }, []);
+  }, [isMeasureSelected, onMeasureClick]);
 
   return (
-    <div className="tab-measure-wrap">
+    <div className={`tab-measure-wrap ${isMeasureSelected ? 'tab-measure-wrap--selected' : ''}`}>
       <div className="tab-measure-num">
         {mi + 1}
       </div>
@@ -183,9 +200,10 @@ export function TabMeasureView({
               </div>
             );
           })}
-          <div className="tab-barline-zone"
-            title="点击管理小节"
+          <div className={`tab-barline-zone ${isMeasureSelected ? 'tab-barline-zone--selected' : ''}`}
+            title="点击选中小节，Shift 多选，右键菜单"
             onClick={handleBarlineClick}
+            onContextMenu={handleBarlineContextMenu}
           >
             <div className="tab-barline" />
           </div>
@@ -209,10 +227,18 @@ export function TabMeasureView({
       </div>
       {ctxMenu && (
         <div ref={ctxRef} className="tab-measure-ctx-menu" style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y, zIndex: 100 }}>
-          <div className="tab-ctx-menu-item" onClick={() => { onInsertMeasureBefore(); setCtxMenu(null); }}>前插小节</div>
-          <div className="tab-ctx-menu-item" onClick={() => { onInsertMeasureAfter(); setCtxMenu(null); }}>后插小节</div>
+          <div className="tab-ctx-menu-item" onClick={() => { onInsertMeasureBefore(); setCtxMenu(null); }}>前插空小节</div>
+          <div className="tab-ctx-menu-item" onClick={() => { onInsertMeasureAfter(); setCtxMenu(null); }}>后插空小节</div>
+          <div className="tab-ctx-menu-item" onClick={() => { onCopyMeasures(); setCtxMenu(null); }}>
+            复制{measureSelCount > 1 ? ` ${measureSelCount} 小节` : '小节'}
+          </div>
+          {hasClipboard && (
+            <div className="tab-ctx-menu-item" onClick={() => { onPasteAfter(); setCtxMenu(null); }}>粘贴到后方</div>
+          )}
           {measureCount > 1 && (
-            <div className="tab-ctx-menu-item tab-ctx-menu-item--danger" onClick={() => { onDeleteMeasure(); setCtxMenu(null); }}>删除小节</div>
+            <div className="tab-ctx-menu-item tab-ctx-menu-item--danger" onClick={() => { onDeleteMeasures(); setCtxMenu(null); }}>
+              删除{measureSelCount > 1 ? ` ${measureSelCount} 小节` : '小节'}
+            </div>
           )}
         </div>
       )}

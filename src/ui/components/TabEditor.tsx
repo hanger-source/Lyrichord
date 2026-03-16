@@ -41,6 +41,7 @@ interface TabEditorProps {
   saving?: boolean;
   saveMsg?: string | null;
   onTmdChange?: (tmd: string) => void;
+  onMeasuresChange?: (measures: TabMeasure[], segmentName: string) => void;
   onChordSelectionStart?: (sel: ChordSelectionPending) => void;
   chordToApply?: { name: string; positionIndex: number } | null;
   onChordApplied?: () => void;
@@ -61,7 +62,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   initialMeasures, initialTempo = 72, initialBpm = 8, initialTsLabel = '4/4',
   segmentName = '', onSegmentNameChange,
   onSave, saving, saveMsg,
-  onTmdChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
+  onTmdChange, onMeasuresChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
   previewOpen, onTogglePreview, onRhythmSelectionStart,
 }: TabEditorProps, ref) {
   const [tempo, setTempo] = useState(initialTempo);
@@ -237,6 +238,8 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   const [beatDrag, setBeatDrag] = useState<{ mi: number; start: number; end: number } | null>(null);
   const [rhythmDrag, setRhythmDrag] = useState<{ mi: number; start: number; end: number } | null>(null);
   const [activeChord, setActiveChord] = useState<{ mi: number; fromBeat: number } | null>(null);
+  const [measureSel, setMeasureSel] = useState<{ from: number; to: number } | null>(null);
+  const clipboardRef = useRef<TabMeasure[]>([]);
   const [containerW, setContainerW] = useState(900);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -258,8 +261,29 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   }, []);
 
   // 和弦填入：chordToApply + pendingSel 同时存在时填入
+  // 或者 chordToApply + activeChord 存在时替换已选中和弦
   useEffect(() => {
-    if (chordToApply && pendingSel) {
+    if (!chordToApply) return;
+
+    // 优先：替换已选中的和弦
+    if (activeChord) {
+      const { mi, fromBeat } = activeChord;
+      updateMeasures(prev => {
+        const next = structuredClone(prev);
+        const chord = next[mi].chords.find(c => c.fromBeat === fromBeat);
+        if (chord) {
+          chord.name = chordToApply.name;
+          chord.positionIndex = chordToApply.positionIndex;
+        }
+        return next;
+      });
+      setActiveChord(null);
+      onChordApplied?.();
+      return;
+    }
+
+    // 其次：拖选区域填入新和弦
+    if (pendingSel) {
       const { measureIdx: mi, fromBeat, toBeat } = pendingSel;
       updateMeasures(prev => {
         const next = structuredClone(prev);
@@ -271,12 +295,13 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
       setPendingSel(null);
       onChordApplied?.();
     }
-  }, [chordToApply, pendingSel, onChordApplied, updateMeasures]);
+  }, [chordToApply, pendingSel, activeChord, onChordApplied, updateMeasures]);
 
   // Escape 取消 pendingSel 和 chordToApply；Backspace 删除选中和弦
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (measureSel) { setMeasureSel(null); }
         if (activeChord) { setActiveChord(null); }
         if (pendingSel) { setPendingSel(null); }
         if (chordToApply) { onChordApplied?.(); }
@@ -294,11 +319,12 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [pendingSel, chordToApply, onChordApplied, activeChord, updateMeasures]);
+  }, [pendingSel, chordToApply, onChordApplied, activeChord, measureSel, updateMeasures]);
 
   const rows = useMemo(() => splitRows(measures, containerW), [measures, containerW]);
   const tmdText = useMemo(() => genTmd(measures, { bpm: tempo, tsLabel, sectionName: segmentName }), [measures, tempo, tsLabel, segmentName]);
   useEffect(() => { onTmdChange?.(tmdText); }, [tmdText, onTmdChange]);
+  useEffect(() => { onMeasuresChange?.(measures, segmentName); }, [measures, segmentName, onMeasuresChange]);
 
   // TMD 折叠面板 — 编辑草稿
   const [tmdDraft, setTmdDraft] = useState<string | null>(null);
@@ -312,7 +338,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   }, [tmdDraft, updateMeasures]);
 
   // ---- 和弦拖选 ----
-  const handleChordMouseDown = useCallback((mi: number, bi: number) => setDragState({ mi, startBi: bi, endBi: bi }), []);
+  const handleChordMouseDown = useCallback((mi: number, bi: number) => { setDragState({ mi, startBi: bi, endBi: bi }); setMeasureSel(null); }, []);
   const handleChordMouseEnter = useCallback((mi: number, bi: number) => setDragState(prev => prev && prev.mi === mi ? { ...prev, endBi: bi } : prev), []);
   const handleChordMouseUp = useCallback(() => {
     if (!dragState) return;
@@ -324,7 +350,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   useEffect(() => { const up = () => { if (dragState) handleChordMouseUp(); }; window.addEventListener('mouseup', up); return () => window.removeEventListener('mouseup', up); }, [dragState, handleChordMouseUp]);
 
   // ---- 拍选中 ----
-  const handleBeatDragStart = useCallback((mi: number, bi: number) => { setBeatDrag({ mi, start: bi, end: bi }); setBeatSel(null); }, []);
+  const handleBeatDragStart = useCallback((mi: number, bi: number) => { setBeatDrag({ mi, start: bi, end: bi }); setBeatSel(null); setMeasureSel(null); }, []);
   const handleBeatDragEnter = useCallback((mi: number, bi: number) => setBeatDrag(prev => prev && prev.mi === mi ? { ...prev, end: bi } : prev), []);
   const handleBeatDragEnd = useCallback(() => {
     if (!beatDrag) return;
@@ -334,7 +360,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   useEffect(() => { const up = () => { if (beatDrag) handleBeatDragEnd(); }; window.addEventListener('mouseup', up); return () => window.removeEventListener('mouseup', up); }, [beatDrag, handleBeatDragEnd]);
 
   // ---- 底部节奏型拖选 ----
-  const handleRhythmDragStart = useCallback((mi: number, bi: number) => { setRhythmDrag({ mi, start: bi, end: bi }); setRhythmSel(null); }, []);
+  const handleRhythmDragStart = useCallback((mi: number, bi: number) => { setRhythmDrag({ mi, start: bi, end: bi }); setRhythmSel(null); setMeasureSel(null); }, []);
   const handleRhythmDragEnter = useCallback((mi: number, bi: number) => setRhythmDrag(prev => prev && prev.mi === mi ? { ...prev, end: bi } : prev), []);
   const handleRhythmDragEnd = useCallback(() => {
     if (!rhythmDrag) return;
@@ -407,14 +433,65 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     setBeatSel(null);
   }, [beatSel, updateMeasures]);
 
-  // ---- 小节插入 ----
+  // ---- 小节操作：选中 / 插入 / 复制 / 粘贴 ----
+
+  const handleMeasureClick = useCallback((mi: number, shiftKey: boolean, metaKey: boolean) => {
+    if (shiftKey && measureSel) {
+      // Shift：连续选区
+      setMeasureSel({ from: Math.min(measureSel.from, mi), to: Math.max(measureSel.to, mi) });
+    } else if (metaKey && measureSel) {
+      // Ctrl/Cmd：toggle 单个小节，合并到已有选区
+      if (mi >= measureSel.from && mi <= measureSel.to) {
+        // 取消选中：如果只选了一个就清空，否则收缩边界
+        if (measureSel.from === measureSel.to) { setMeasureSel(null); }
+        else if (mi === measureSel.from) { setMeasureSel({ from: measureSel.from + 1, to: measureSel.to }); }
+        else if (mi === measureSel.to) { setMeasureSel({ from: measureSel.from, to: measureSel.to - 1 }); }
+        // 中间的不处理（连续选区模型，不支持断开）
+      } else {
+        // 扩展选区到包含该小节
+        setMeasureSel({ from: Math.min(measureSel.from, mi), to: Math.max(measureSel.to, mi) });
+      }
+    } else if (metaKey) {
+      // Ctrl/Cmd 无已有选区：开始新选区
+      setMeasureSel({ from: mi, to: mi });
+    } else {
+      setMeasureSel({ from: mi, to: mi });
+    }
+  }, [measureSel]);
+
   const insertMeasure = useCallback((at: number, before: boolean) => {
     const idx = before ? at : at + 1;
     updateMeasures(prev => [...prev.slice(0, idx), mkMeasure(bpm), ...prev.slice(idx)]);
+    setMeasureSel(null);
   }, [bpm, updateMeasures]);
+
+  const copySelectedMeasures = useCallback(() => {
+    if (!measureSel) return;
+    clipboardRef.current = structuredClone(measures.slice(measureSel.from, measureSel.to + 1));
+  }, [measureSel, measures]);
+
+  const pasteAfter = useCallback((mi: number) => {
+    if (clipboardRef.current.length === 0) return;
+    const copied = structuredClone(clipboardRef.current);
+    updateMeasures(prev => [...prev.slice(0, mi + 1), ...copied, ...prev.slice(mi + 1)]);
+    setMeasureSel(null);
+  }, [updateMeasures]);
+
+  const deleteSelectedMeasures = useCallback(() => {
+    if (!measureSel) return;
+    updateMeasures(prev => {
+      if (prev.length <= 1) return prev;
+      const next = [...prev.slice(0, measureSel.from), ...prev.slice(measureSel.to + 1)];
+      return next.length > 0 ? next : [mkMeasure(bpm)];
+    });
+    setMeasureSel(null);
+  }, [measureSel, bpm, updateMeasures]);
+
+  const measureSelCount = measureSel ? measureSel.to - measureSel.from + 1 : 0;
 
   // ---- 弦线交互 ----
   const handleStringClick = useCallback((mi: number, bi: number, si: number) => {
+    setMeasureSel(null);
     const ch = chordAt(measures, mi, bi);
     const cur = measures[mi]?.beats[bi]?.strings[si]; if (!cur) return;
     if (cur.type === 'none' && ch) {
@@ -498,6 +575,12 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         onTsChange={handleTsChange}
         timeSigs={TIME_SIGS}
         measureCount={measures.length}
+        measureSelCount={measureSelCount}
+        onCopyMeasures={copySelectedMeasures}
+        onDeleteMeasures={deleteSelectedMeasures}
+        onCancelMeasureSel={() => setMeasureSel(null)}
+        hasClipboard={clipboardRef.current.length > 0}
+        onPasteAfter={() => { if (measureSel) pasteAfter(measureSel.to); }}
         previewOpen={previewOpen}
         onTogglePreview={onTogglePreview}
       />
@@ -534,9 +617,15 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
                 focusedCell={focusedCell}
                 onStringClick={(bi, si) => handleStringClick(mi, bi, si)}
                 cellDisplay={(bi, si) => cellDisplay(mi, bi, si)}
-                onInsertMeasureBefore={() => insertMeasure(mi, true)}
-                onInsertMeasureAfter={() => insertMeasure(mi, false)}
-                onDeleteMeasure={() => updateMeasures(prev => prev.length <= 1 ? prev : [...prev.slice(0, mi), ...prev.slice(mi + 1)])}
+                onInsertMeasureBefore={() => insertMeasure(measureSel?.from ?? mi, true)}
+                onInsertMeasureAfter={() => insertMeasure(measureSel?.to ?? mi, false)}
+                onCopyMeasures={copySelectedMeasures}
+                onPasteAfter={() => pasteAfter(measureSel?.to ?? mi)}
+                onDeleteMeasures={deleteSelectedMeasures}
+                isMeasureSelected={!!measureSel && mi >= measureSel.from && mi <= measureSel.to}
+                onMeasureClick={(shiftKey, metaKey) => handleMeasureClick(mi, shiftKey, metaKey)}
+                hasClipboard={clipboardRef.current.length > 0}
+                measureSelCount={measureSelCount}
                 measureCount={measures.length}
               />
             ))}

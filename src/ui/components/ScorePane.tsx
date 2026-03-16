@@ -1,7 +1,33 @@
 /**
- * 曲谱渲染 + 播放控制面板
+ * 曲谱渲染 + 播放控制面板 (ScorePane)
  *
- * AlphaTab 自己管理 DOM，React 通过 ref 挂载容器。
+ * ┌──────────────────────────────────────────────────────────────┐
+ * │  职责                                                        │
+ * │  1. 初始化 AlphaTab API，挂载到 DOM 容器                      │
+ * │  2. 接收 PipelineResult → 调用 api.tex() 渲染曲谱             │
+ * │  3. 播放控制 (play/pause/stop/restart/seek/BPM)              │
+ * │  4. 主题配色同步到 AlphaTab 渲染资源                          │
+ * │  5. 修复 AlphaTab 的 Marker/Chord 文字重叠 bug               │
+ * └──────────────────────────────────────────────────────────────┘
+ *
+ * 数据流:
+ *   useAppState → pipelineResult → ScorePane
+ *     → api.tex(alphaTex)  → AlphaTab 渲染 SVG
+ *     → api.scoreLoaded    → 注入 let ring 延音
+ *     → api.postRenderFinished → fixMarkerOverlap hack
+ *
+ * AlphaTab 配置要点:
+ *   - staveProfile: 'tab'     → 只显示 TAB 谱，不显示五线谱
+ *   - soundFont: MuseScore_General.sf3 (38MB, 高质量 GM 吉他采样)
+ *   - let ring 通过 scoreLoaded 回调注入 note.isLetRing = true
+ *     (不通过 AlphaTex {lr} 语法，避免文本膨胀)
+ *   - effectLetRing/effectPalmMute 设为 false，隐藏谱面虚线标记
+ *
+ * React 集成注意:
+ *   - AlphaTab 自己管理 DOM，React 只提供容器 div (ref)
+ *   - useEffect 空依赖 [] 初始化一次，return 里 destroy
+ *   - 播放进度用 ref + rAF 节流，避免高频 setState 阻塞渲染
+ *   - IntersectionObserver 处理 display:none → visible 的重新渲染
  */
 import { useRef, useEffect, useCallback, useState, memo } from 'react';
 import * as alphaTab from '@coderline/alphatab';
@@ -42,45 +68,49 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
   const pendingTimeRef = useRef<{ current: number; end: number } | null>(null);
   const rafIdRef = useRef(0);
 
-  // 初始化 AlphaTab
+  // ── AlphaTab 初始化 (只执行一次) ──────────────────────────
+  // 使用 SettingsJson 对象（官方 vite-react 示例推荐方式）
+  // 而非 new Settings() 实例，避免 tree-shaking 问题
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // 按照 alphaTab 官方 vite-react 示例的方式初始化
-    // 使用 SettingsJson 对象而非 new Settings() 实例
     const settings: alphaTab.json.SettingsJson = {
       core: {
-        fontDirectory: '/font/',
-        engine: 'svg',
+        fontDirectory: '/font/',   // Bravura 音乐字体目录
+        engine: 'svg',             // SVG 渲染引擎（比 canvas 更清晰）
         logLevel: 'warning',
-        useWorkers: true,
+        useWorkers: true,          // Web Worker 异步渲染，不阻塞主线程
       },
       display: {
-        staveProfile: 'tab',
-        layoutMode: 'page',
+        staveProfile: 'tab',       // 只显示 TAB 谱（不显示五线谱）
+        layoutMode: 'page',        // 分页布局（vs 'horizontal' 横向滚动）
         scale: 1.0,
-        // --- padding 配置 ---
+        // padding 配置 — 给段落名/BPM 标记留出空间
         firstNotationStaffPaddingTop: 30,
         effectBandPaddingBottom: 20,
       },
       notation: {
-        rhythmMode: 'ShowWithBars',
+        rhythmMode: 'ShowWithBars',  // 在 TAB 谱下方显示节奏符干
         rhythmHeight: 20,
         elements: {
-          effectLyrics: true,
-          effectChordNames: true,
-          effectMarker: true,
-          effectTempo: true,
+          effectLyrics: true,        // 显示歌词
+          effectChordNames: true,    // 显示和弦名
+          effectMarker: true,        // 显示段落标记 (Intro/Verse/Chorus)
+          effectTempo: true,         // 显示速度标记
           effectCapo: false,
           effectDynamics: false,
+          effectLetRing: false,      // ← 隐藏 let ring 虚线标记（音效仍生效）
+          effectPalmMute: false,     // ← 隐藏 palm mute 标记
         } as any,
       },
       player: {
         enablePlayer: true,
-        enableCursor: true,
-        enableUserInteraction: true,
-        scrollMode: 'continuous',
-        soundFont: '/soundfont/sonivox.sf2',
+        enableCursor: true,          // 播放时显示光标跟踪
+        enableUserInteraction: true, // 允许点击谱面跳转
+        scrollMode: 'continuous',    // 播放时自动滚动
+        // GM SoundFont — MuseScore General (38MB, 高质量吉他采样)
+        // 支持 SF2 和 SF3 格式，SF3 = SF2 + Ogg Vorbis 压缩
+        soundFont: '/soundfont/MuseScore_General.sf3',
       },
     };
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
@@ -96,6 +126,37 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
 
     api.error.on((e: { message?: string; type?: string }) => {
       console.error('AlphaTab error:', e);
+    });
+
+    // ── let ring 注入 ──────────────────────────────────────
+    // 吉他拨弦后的余音衰减效果。在 score model 加载后遍历所有音符，
+    // 给非 dead note / 非 palm mute 的音符设置 isLetRing = true。
+    //
+    // 为什么不在 AlphaTex 里加 {lr}:
+    //   1. 会让 AlphaTex 文本膨胀（每个音符都要加）
+    //   2. scoreLoaded 回调直接改 model 更干净
+    //
+    // 为什么不用 SustainPedalMarker:
+    //   AlphaTab 的 SustainPedalMarker 构造函数未导出为公开 API，
+    //   运行时会报 "not a constructor" 错误。
+    api.scoreLoaded.on((score: any) => {
+      if (!score) return;
+      for (const track of score.tracks) {
+        for (const staff of track.staves) {
+          for (const bar of staff.bars) {
+            for (const voice of bar.voices) {
+              for (const beat of voice.beats) {
+                for (const note of beat.notes) {
+                  // 跳过 dead note 和 palm mute
+                  if (!note.isDead && !note.isPalmMute) {
+                    note.isLetRing = true;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     });
 
     api.playerStateChanged.on(e => {
@@ -114,7 +175,10 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
       setCurrentTime(0);
     });
 
-    // 播放进度 — 用 rAF 节流，避免高频 setState
+    // ── 播放进度 — rAF 节流 ─────────────────────────────────
+    // AlphaTab 的 playerPositionChanged 事件触发频率很高（~60fps），
+    // 直接 setState 会导致 React 高频重渲染，阻塞主线程。
+    // 方案: 用 ref 缓冲最新值，requestAnimationFrame 合并更新。
     api.playerPositionChanged.on(e => {
       pendingTimeRef.current = { current: e.currentTime, end: e.endTime };
       if (!rafIdRef.current) {
@@ -131,10 +195,16 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
 
     initChordTooltip(containerRef.current);
 
-    // 修复 Marker/Chord 同行重叠：AlphaTab 把 section marker 和 chord name
-    // 放在同一个 effect band slot（相同 Y 坐标），导致文字重叠。
-    // 渲染完成后把 Marker + Tempo（段落名、BPM、音符符号）整体上移。
-    const SECTION_SHIFT = -32;  // 段落名偏移
+    // ── Marker/Chord 重叠修复 hack ──────────────────────────
+    // AlphaTab bug: section marker (段落名) 和 chord name 放在同一个
+    // effect band slot（相同 Y 坐标），导致文字重叠。
+    // 修复方式: 渲染完成后用 DOM 操作把 Marker + Tempo 整体上移。
+    //
+    // 识别方式:
+    //   - 段落名: <text> 元素，bold Georgia 字体，左对齐
+    //   - BPM: 同上但内容匹配 /=\s*\d/（如 "♩= 72"）
+    //   - 音符符号: <g class="at"> 内的 Bravura 字体文本
+    const SECTION_SHIFT = -32;  // 段落名偏移量 (px)
     const TEMPO_SHIFT = -16;    // BPM/音符符号偏移
     const fixMarkerOverlap = () => {
       if (!containerRef.current) return;
@@ -186,8 +256,9 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
     api.postRenderFinished.on(fixMarkerOverlap);
     api.renderer.partialRenderFinished.on(fixMarkerOverlap);
 
-    // 容器重新可见时触发重新渲染（解决 display:none 后恢复白屏）
-    // 播放中跳过，避免 re-render 阻塞主线程导致音频卡顿
+    // ── 可见性监听 ─────────────────────────────────────────
+    // 容器从 display:none 恢复可见时触发重新渲染（解决白屏问题）。
+    // 播放中跳过 re-render，避免阻塞主线程导致音频卡顿。
     const observer = new IntersectionObserver(entries => {
       for (const entry of entries) {
         if (entry.isIntersecting && apiRef.current && !isPlayingRef.current) {

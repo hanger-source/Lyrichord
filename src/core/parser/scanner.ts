@@ -163,7 +163,7 @@ function scanBodyLine(
   }
 
   // TAB 段落引用: @segment(Name)
-  const segRefMatch = line.match(/^@segment\(([^)]+)\)$/);
+  const segRefMatch = line.match(/^\s*@segment\(([^)]+)\)\s*$/);
   if (segRefMatch) {
     tokens.push(tok('SEGMENT_REF', segRefMatch[1].trim(), lineNum, 0));
     return;
