@@ -125,7 +125,10 @@ export function useAppState() {
     // 展开 @segment(Name) 引用
     const expanded = expandSegmentRefs(source, (name) => {
       const seg = segmentCacheRef.current.find(s => s.name === name);
-      if (!seg) return null;
+      if (!seg) {
+        console.warn(`[Pipeline] @segment(${name}) 未找到。缓存: [${segmentCacheRef.current.map(s => s.name).join(', ')}]`);
+        return null;
+      }
       try {
         const measures = JSON.parse(seg.measuresJson) as TabMeasure[];
         const { body } = genSectionBody(measures, seg.name);

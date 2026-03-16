@@ -42,6 +42,13 @@ interface TabToolbarProps {
   timeSigs: [string, number][];
   // 小节
   measureCount: number;
+  // 小节选中
+  measureSelCount: number;
+  onCopyMeasures: () => void;
+  onDeleteMeasures: () => void;
+  onCancelMeasureSel: () => void;
+  hasClipboard: boolean;
+  onPasteAfter: () => void;
   // 预览
   previewOpen?: boolean;
   onTogglePreview?: () => void;
@@ -57,10 +64,12 @@ export function TabToolbar({
   tempo, onTempoChange,
   tsLabel, onTsChange, timeSigs,
   measureCount,
+  measureSelCount, onCopyMeasures, onDeleteMeasures, onCancelMeasureSel, hasClipboard, onPasteAfter,
   previewOpen, onTogglePreview,
 }: TabToolbarProps) {
   const hasBeatSel = beatSelCount > 0;
   const hasRhythmSel = rhythmSelCount > 0;
+  const hasMeasureSel = measureSelCount > 0;
 
   return (
     <div className="tab-toolbar-wrap">
@@ -165,6 +174,15 @@ export function TabToolbar({
             <button className="tab-ctx-btn" disabled={beatSelCount < 2} onClick={onMergeBeats}>合拍</button>
             <button className="tab-ctx-btn" onClick={onToggleRest}>休止</button>
             <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelBeatSel}>取消</button>
+          </div>
+        );
+        if (hasMeasureSel) return (
+          <div className="tab-context-bar">
+            <span className="tab-context-info">已选 {measureSelCount} 小节</span>
+            <button className="tab-ctx-btn" onClick={onCopyMeasures}>复制</button>
+            {hasClipboard && <button className="tab-ctx-btn" onClick={onPasteAfter}>粘贴到后方</button>}
+            <button className="tab-ctx-btn tab-ctx-btn--cancel" style={{ borderColor: 'var(--red, #ef4444)', color: 'var(--red, #ef4444)' }} onClick={onDeleteMeasures}>删除</button>
+            <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelMeasureSel}>取消</button>
           </div>
         );
         return <div className="tab-context-bar--placeholder" />;

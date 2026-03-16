@@ -86,6 +86,7 @@
 
 /* 小节 */
 .tab-measure-wrap { display: flex; flex-direction: column; margin-right: 8px; }
+.tab-measure-wrap--selected { outline: 2px solid var(--accent); outline-offset: -1px; border-radius: 3px; background: var(--accent-dim); }
 .tab-measure-num {
   font-size: 10px; font-weight: 700; color: var(--text-muted);
   padding-left: 2px; height: 16px; line-height: 16px; user-select: none;
@@ -115,6 +116,8 @@
   cursor: pointer; transition: background 0.1s;
 }
 .tab-barline-zone:hover { background: var(--accent-dim); }
+.tab-barline-zone--selected { background: var(--beat-sel-bg, rgba(13,148,136,0.12)); }
+.tab-barline-zone--selected:hover { background: var(--beat-sel-bg, rgba(13,148,136,0.18)); }
 .tab-barline { width: 2px; background: var(--text-primary); flex-shrink: 0; }
 .tab-beat-col {
   display: flex; flex-direction: column; flex-shrink: 0;

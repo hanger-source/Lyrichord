@@ -3,13 +3,39 @@
  *
  * Song → AlphaTexOutput
  *
+ * ┌─────────────────────────────────────────────────────────────┐
+ * │ 核心数据流                                                   │
+ * │                                                             │
+ * │  TMD Text ──scan()──▶ Token[]                               │
+ * │           ──buildSong()──▶ Song { masterBars, bars, ... }   │
+ * │           ──generate()──▶ AlphaTexOutput { tex, measures }  │
+ * │                                                             │
+ * │  AlphaTex 文本最终传给 AlphaTab 的 api.tex(tex) 进行渲染/播放  │
+ * └─────────────────────────────────────────────────────────────┘
+ *
  * 两种小节模式:
  *   1. TEX 直通: beat._rawTex 存在 → 直接输出原始 AlphaTex beat 文本
+ *      用于 TAB 编辑器手写的精确音符（如前奏指弹）
  *   2. 节奏型展开: 用 chordSlots + rhythmPattern 生成 beat 序列
+ *      用于弹唱段落（和弦 + 节奏型自动展开）
+ *
+ * AlphaTex 语法参考:
+ *   音符: fret.string (如 3.6 = 6弦3品)
+ *   多音: (3.6 2.5 0.4)
+ *   时值: .4 = 四分音符, .8 = 八分, .16 = 十六分
+ *   Beat 属性: {ad 60} = brush down, {au 60} = brush up, {ds} = dead stroke
+ *   Note 属性: {lr} = let ring, {pm} = palm mute, {x} = dead note
+ *   和弦标记: {ch "Am"} → 谱面显示和弦名
+ *   段落标记: \section "前奏" → 谱面显示段落名
  *
  * 歌词: 使用 AlphaTab 的 \lyrics staff-level 指令
  *   格式: \lyrics "word1 word2 - word3 ..."
  *   空格分隔对应每个 beat，"-" 表示延续
+ *
+ * 延音效果:
+ *   let ring 不在此处生成（避免 AlphaTex 文本膨胀），
+ *   而是在 ScorePane.tsx 的 scoreLoaded 回调里统一注入 note.isLetRing = true。
+ *   谱面上的 let ring 虚线标记通过 effectLetRing: false 隐藏。
  */
 import type {
   Song, Bar, Beat, RhythmPattern, GuitarFrets,
@@ -266,9 +292,18 @@ function resolveFrets(chordId: string, song: Song): GuitarFrets | null {
 }
 
 
-// ============================================================
-// 节奏型展开生成
-// ============================================================
+/**
+ * 节奏型展开生成
+ *
+ * 核心算法:
+ *   1. 遍历 rhythm.slots，按 beatPos 匹配 timeline 中的和弦变化点
+ *   2. 和弦变化时重置 patIdx（节奏型从头开始）
+ *   3. 合并连续 sustain slot 到前一个 event 的 slotSpan
+ *   4. 每个 event 转换为 AlphaTex beat 文本
+ *
+ * 时值计算: slotBeats = beatsPerMeasure / slots.length
+ *   例: 4/4 拍 + 16 slots → 每 slot = 0.25 拍 = 十六分音符
+ */
 
 /**
  * 每个 slot 占多少拍。
@@ -417,6 +452,23 @@ function generateFallbackMeasure(
 // Slot → Notes
 // ============================================================
 
+/**
+ * Slot → Notes 转换
+ *
+ * 将节奏型的单个 slot 转换为 AlphaTex 音符列表。
+ *
+ * slot.kind:
+ *   'pluck' → 拨弦: target='root' 只弹根音, 否则按 strings[] 指定弦
+ *   'strum' → 扫弦:
+ *     action='down'    → 下扫 {ad 60}
+ *     action='up'      → 上扫 {au 60}
+ *     action='mute'    → 闷音 {ds} (dead stroke)
+ *     action='sustain' → 延续前一个音（合并到前一个 event 的时值里）
+ *
+ * frets: GuitarFrets = number[6]，索引 0=1弦(高E) 5=6弦(低E)
+ * 弦号约定: string 6=低E, string 1=高E (AlphaTab 标准)
+ * 索引转换: idx = 6 - string
+ */
 function slotToNotes(
   slot: RhythmSlot,
   frets: GuitarFrets,

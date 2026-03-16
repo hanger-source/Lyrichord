@@ -30,7 +30,7 @@ export type SegmentResolver = (name: string) => string | null;
  * 展开后的文本可以直接传给 tmdToAlphaTex。
  */
 export function expandSegmentRefs(source: string, resolver: SegmentResolver): string {
-  return source.replace(/^@segment\(([^)]+)\)$/gm, (_match, name: string) => {
+  return source.replace(/^\s*@segment\(([^)]+)\)\s*$/gm, (_match, name: string) => {
     const body = resolver(name.trim());
     if (body) return body;
     return `# [WARNING] 段落引用未找到: ${name.trim()}`;
