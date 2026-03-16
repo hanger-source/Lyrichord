@@ -438,8 +438,8 @@ function slotToNotes(
   if (slot.kind === 'strum') {
     if (slot.action === 'sustain') return { notes: [] };
     const all = getAllPlayable(frets);
-    if (slot.action === 'down') return { notes: all, brush: 'bd' };
-    if (slot.action === 'up') return { notes: all, brush: 'bu' };
+    if (slot.action === 'down') return { notes: all, brush: 'ad 60' };
+    if (slot.action === 'up') return { notes: all, brush: 'au 60' };
     if (slot.action === 'mute') return { notes: all, brush: 'ds' };
     return { notes: all };
   }
