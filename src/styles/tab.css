@@ -14,8 +14,8 @@
 }
 
 /* 工具栏 */
-.tab-toolbar-wrap { flex-shrink: 0; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
-.tab-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 12px; gap: 8px; }
+.tab-toolbar-wrap { flex-shrink: 0; }
+.tab-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 12px; gap: 8px; background: var(--bg-elevated); }
 .tab-toolbar--row1 { border-bottom: 1px solid var(--border); padding: 6px 12px; }
 .tab-toolbar--row2 { padding: 4px 12px; overflow-x: auto; }
 .tab-toolbar-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
@@ -29,21 +29,17 @@
 }
 .tab-toolbar-info { font-size: 11px; color: var(--text-muted); }
 .tab-toolbar-divider { color: var(--border); font-size: 14px; margin: 0 2px; flex-shrink: 0; }
-.tab-copy-btn {
-  font-size: 12px; padding: 3px 10px;
-  border: 1px solid var(--accent); border-radius: var(--radius);
-  background: transparent; color: var(--accent); cursor: pointer; transition: background 0.15s;
-}
-.tab-copy-btn:hover { background: var(--accent-dim); }
-.tab-toolbar-hint { font-size: 12px; color: var(--orange); font-weight: 500; animation: pulse 1.2s ease infinite; }
 
 /* 上下文操作栏 */
 .tab-context-bar {
   display: flex; align-items: center; gap: 8px;
-  padding: 5px 16px; border-top: 1px solid var(--border);
-  background: var(--beat-sel-bg); animation: slideDown 0.12s ease;
+  padding: 5px 16px; height: 30px; box-sizing: border-box;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
 }
-@keyframes slideDown { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.tab-context-bar--placeholder {
+  height: 30px; box-sizing: border-box;
+}
 .tab-context-hint { font-size: 12px; color: var(--orange); font-weight: 500; animation: pulse 1.2s ease infinite; }
 .tab-context-info { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
 .tab-ctx-btn {
@@ -89,7 +85,6 @@
 .tab-label-chord-row { height: 26px; }
 
 /* 小节 */
-.tab-measure { display: flex; flex-direction: column; }
 .tab-measure-wrap { display: flex; flex-direction: column; margin-right: 8px; }
 .tab-measure-num {
   font-size: 10px; font-weight: 700; color: var(--text-muted);
@@ -111,12 +106,16 @@
 .tab-split-bracket { position: absolute; top: 0; left: 0; right: 0; height: 5px; box-sizing: border-box; }
 .tab-merge-bar { position: absolute; bottom: 0; left: 2px; right: 2px; height: 3px; background: var(--merge-bar); border-radius: 1px; }
 .tab-beat-label-text { position: relative; z-index: 1; }
-.tab-col-split { border-right: 1px dashed rgba(139, 92, 246, 0.2); }
-.tab-col-merged { /* 合拍列 */ }
 
 /* 弦线区 */
 .tab-strings-area { display: flex; align-items: stretch; }
-.tab-barline { width: 2px; background: var(--text-primary); flex-shrink: 0; align-self: stretch; }
+.tab-barline-zone {
+  width: 10px; flex-shrink: 0; align-self: stretch;
+  display: flex; align-items: stretch; justify-content: center;
+  cursor: pointer; transition: background 0.1s;
+}
+.tab-barline-zone:hover { background: var(--accent-dim); }
+.tab-barline { width: 2px; background: var(--text-primary); flex-shrink: 0; }
 .tab-beat-col {
   display: flex; flex-direction: column; flex-shrink: 0;
   transition: background 0.1s; box-sizing: border-box; position: relative;
@@ -127,9 +126,8 @@
 .tab-chord-region {
   position: absolute; top: 2px; bottom: 2px;
   background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 3px;
-  z-index: 2; cursor: pointer;
+  z-index: 2; cursor: pointer; pointer-events: auto;
   display: flex; align-items: center; justify-content: center;
-  z-index: 2; pointer-events: auto; cursor: pointer;
   transition: background 0.1s, border-color 0.1s;
 }
 .tab-chord-region:hover { background: var(--accent-dim); border-color: var(--accent-hover); }
@@ -145,24 +143,6 @@
 .tab-chord-drag-cell:hover { background: var(--accent-dim); }
 .tab-chord-drag-cell.dragging { background: rgba(13,148,136,0.18); }
 .tab-chord-drag-cell.pending { background: var(--orange-dim); border-top: 2px solid var(--orange); }
-
-/* 和弦搜索下拉 */
-.chord-picker {
-  position: absolute; top: 100%; z-index: 10; min-width: 140px;
-  background: var(--bg-surface); border: 1px solid var(--border);
-  border-radius: var(--radius); box-shadow: var(--shadow-md); overflow: hidden;
-}
-.chord-picker-input {
-  width: 100%; padding: 6px 8px; border: none; border-bottom: 1px solid var(--border);
-  font-size: 13px; font-weight: 600; color: var(--text-primary);
-  background: var(--bg-input); outline: none; font-family: inherit;
-}
-.chord-picker-list { max-height: 200px; overflow-y: auto; }
-.chord-picker-item {
-  padding: 5px 8px; font-size: 12px; font-weight: 600;
-  color: var(--text-secondary); cursor: pointer; transition: background 0.1s;
-}
-.chord-picker-item:hover, .chord-picker-item.active { background: var(--accent-dim); color: var(--accent); }
 
 /* 弦线格 */
 .tab-string-cell {
@@ -188,13 +168,6 @@
 }
 .tab-fret-display.is-x { color: var(--text-secondary); font-size: 12px; }
 .tab-fret-display.is-num { color: var(--text-primary); }
-
-.tab-fret-input {
-  position: relative; z-index: 2; width: 24px;
-  font-size: 13px; font-weight: 700; font-family: var(--font-mono);
-  text-align: center; border: 1px solid var(--accent); border-radius: 3px;
-  background: var(--bg-surface); color: var(--text-primary); outline: none; padding: 1px;
-}
 
 /* TMD 折叠面板 */
 .tab-tmd-panel { border-top: 1px solid var(--border); }
@@ -233,3 +206,17 @@
   height: 18px; display: flex; align-items: center; justify-content: flex-end;
   font-size: 10px; color: var(--text-muted); padding-right: 4px; user-select: none;
 }
+
+/* 小节号右键菜单 */
+.tab-measure-ctx-menu {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-md);
+  padding: 4px 0; min-width: 100px;
+}
+.tab-ctx-menu-item {
+  padding: 5px 12px; font-size: 12px; color: var(--text-primary);
+  cursor: pointer; user-select: none; transition: background 0.1s;
+}
+.tab-ctx-menu-item:hover { background: var(--bg-hover); }
+.tab-ctx-menu-item--danger { color: var(--red, #ef4444); }
+.tab-ctx-menu-item--danger:hover { background: rgba(239, 68, 68, 0.1); }

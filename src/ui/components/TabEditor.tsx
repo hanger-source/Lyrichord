@@ -22,11 +22,11 @@ export { mkMeasure, emptyStrings } from './tab/tab-types';
 export { genSectionBody, genChordDefs, genTmdHeader } from './tab/tab-tmd-gen';
 
 import {
-  STRING_COUNT, STRING_NAMES, LABEL_W, TIME_SIGS,
+  STRING_NAMES, TIME_SIGS,
   emptyStrings, mkBeat, mkMeasure,
 } from './tab/tab-types';
 import type { TabMeasure, ChordSelectionPending } from './tab/tab-types';
-import { chordAt, chordFretForString, genTmd, splitRows } from './tab/tab-tmd-gen';
+import { chordAt, genTmd, splitRows } from './tab/tab-tmd-gen';
 
 // ---- 组件 Props ----
 
@@ -41,7 +41,6 @@ interface TabEditorProps {
   saving?: boolean;
   saveMsg?: string | null;
   onTmdChange?: (tmd: string) => void;
-  fullTmd?: string | null;
   onChordSelectionStart?: (sel: ChordSelectionPending) => void;
   chordToApply?: { name: string; positionIndex: number } | null;
   onChordApplied?: () => void;
@@ -62,7 +61,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   initialMeasures, initialTempo = 72, initialBpm = 8, initialTsLabel = '4/4',
   segmentName = '', onSegmentNameChange,
   onSave, saving, saveMsg,
-  onTmdChange, fullTmd, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
+  onTmdChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
   previewOpen, onTogglePreview, onRhythmSelectionStart,
 }: TabEditorProps, ref) {
   const [tempo, setTempo] = useState(initialTempo);
@@ -258,9 +257,6 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     return () => { ro.disconnect(); cancelAnimationFrame(rafRef.current); };
   }, []);
 
-  const addMeasure = useCallback(() => updateMeasures(prev => [...prev, mkMeasure(bpm)]), [bpm, updateMeasures]);
-  const removeLastMeasure = useCallback(() => updateMeasures(prev => prev.length <= 1 ? prev : prev.slice(0, -1)), [updateMeasures]);
-
   // 和弦填入：chordToApply + pendingSel 同时存在时填入
   useEffect(() => {
     if (chordToApply && pendingSel) {
@@ -277,17 +273,28 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     }
   }, [chordToApply, pendingSel, onChordApplied, updateMeasures]);
 
-  // Escape 取消 pendingSel 和 chordToApply
+  // Escape 取消 pendingSel 和 chordToApply；Backspace 删除选中和弦
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (activeChord) { setActiveChord(null); }
         if (pendingSel) { setPendingSel(null); }
         if (chordToApply) { onChordApplied?.(); }
+      }
+      if (e.key === 'Backspace' && activeChord) {
+        e.preventDefault();
+        const { mi, fromBeat } = activeChord;
+        updateMeasures(prev => {
+          const next = structuredClone(prev);
+          next[mi].chords = next[mi].chords.filter(c => c.fromBeat !== fromBeat);
+          return next;
+        });
+        setActiveChord(null);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [pendingSel, chordToApply, onChordApplied]);
+  }, [pendingSel, chordToApply, onChordApplied, activeChord, updateMeasures]);
 
   const rows = useMemo(() => splitRows(measures, containerW), [measures, containerW]);
   const tmdText = useMemo(() => genTmd(measures, { bpm: tempo, tsLabel, sectionName: segmentName }), [measures, tempo, tsLabel, segmentName]);
@@ -315,10 +322,6 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     setPendingSel(sel); onChordSelectionStart?.(sel); setDragState(null);
   }, [dragState, onChordSelectionStart]);
   useEffect(() => { const up = () => { if (dragState) handleChordMouseUp(); }; window.addEventListener('mouseup', up); return () => window.removeEventListener('mouseup', up); }, [dragState, handleChordMouseUp]);
-
-  const removeChordAt = useCallback((mi: number, bi: number) => {
-    updateMeasures(prev => { const next = structuredClone(prev); next[mi].chords = next[mi].chords.filter(c => !(c.fromBeat <= bi && bi < c.toBeat)); return next; });
-  }, [updateMeasures]);
 
   // ---- 拍选中 ----
   const handleBeatDragStart = useCallback((mi: number, bi: number) => { setBeatDrag({ mi, start: bi, end: bi }); setBeatSel(null); }, []);
@@ -404,6 +407,12 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     setBeatSel(null);
   }, [beatSel, updateMeasures]);
 
+  // ---- 小节插入 ----
+  const insertMeasure = useCallback((at: number, before: boolean) => {
+    const idx = before ? at : at + 1;
+    updateMeasures(prev => [...prev.slice(0, idx), mkMeasure(bpm), ...prev.slice(idx)]);
+  }, [bpm, updateMeasures]);
+
   // ---- 弦线交互 ----
   const handleStringClick = useCallback((mi: number, bi: number, si: number) => {
     const ch = chordAt(measures, mi, bi);
@@ -462,7 +471,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
 
   // ---- 渲染 ----
   return (
-    <div className="tab-editor-v2">
+    <div className="tab-editor-v2" onContextMenu={e => e.preventDefault()}>
       <TabToolbar
         segmentName={segmentName}
         onSegmentNameChange={n => onSegmentNameChange?.(n)}
@@ -472,6 +481,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         onUndo={undo}
         onRedo={redo}
         beatSelCount={selCount}
+        beatSelMi={beatSel?.mi ?? null}
         onSplitBeat={splitBeat}
         onMergeBeats={mergeBeats}
         onToggleRest={toggleRestForSel}
@@ -488,8 +498,6 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         onTsChange={handleTsChange}
         timeSigs={TIME_SIGS}
         measureCount={measures.length}
-        onAddMeasure={addMeasure}
-        onRemoveMeasure={removeLastMeasure}
         previewOpen={previewOpen}
         onTogglePreview={onTogglePreview}
       />
@@ -522,11 +530,14 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
                 onChordMouseEnter={bi => handleChordMouseEnter(mi, bi)}
                 onChordClick={(name, posIdx, fromBeat) => { setActiveChord({ mi, fromBeat: fromBeat ?? 0 }); setPendingSel(null); onChordApplied?.(); onChordClick?.(name, posIdx); }}
                 activeChord={activeChord?.mi === mi ? activeChord : null}
-                onChordRemove={bi => removeChordAt(mi, bi)}
                 onPendingSelClear={() => setPendingSel(null)}
                 focusedCell={focusedCell}
                 onStringClick={(bi, si) => handleStringClick(mi, bi, si)}
                 cellDisplay={(bi, si) => cellDisplay(mi, bi, si)}
+                onInsertMeasureBefore={() => insertMeasure(mi, true)}
+                onInsertMeasureAfter={() => insertMeasure(mi, false)}
+                onDeleteMeasure={() => updateMeasures(prev => prev.length <= 1 ? prev : [...prev.slice(0, mi), ...prev.slice(mi + 1)])}
+                measureCount={measures.length}
               />
             ))}
           </div>
@@ -540,12 +551,12 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         <Collapsible.Content className="tab-tmd-body">
           <textarea
             className="tab-tmd-textarea"
-            value={tmdDraft ?? fullTmd ?? tmdText}
+            value={tmdDraft ?? tmdText}
             onChange={e => setTmdDraft(e.target.value)}
             rows={8}
             spellCheck={false}
           />
-          {tmdDraft !== null && tmdDraft !== (fullTmd ?? tmdText) && (
+          {tmdDraft !== null && tmdDraft !== tmdText && (
             <div className="tab-tmd-actions">
               <button className="tab-action-btn tab-save-btn" onClick={handleImportTmd}>应用</button>
               <button className="tab-action-btn" onClick={() => setTmdDraft(null)}>取消</button>

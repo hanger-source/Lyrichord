@@ -18,6 +18,7 @@
  */
 import { useState, useCallback } from 'react';
 import { getDb, persist } from '../../db/connection';
+import initSqlJs from 'sql.js';
 
 // ---- 导出辅助 ----
 
@@ -132,7 +133,7 @@ export function DbToolsPanel() {
     try {
       const db = await getDb();
       const data = db.export();
-      const blob = new Blob([data], { type: 'application/x-sqlite3' });
+      const blob = new Blob([data.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
       const ts = new Date().toISOString().slice(0, 10);
       downloadBlob(blob, `lyrichord-${ts}.db`);
       setLog('SQLite 数据库已导出');
@@ -141,6 +142,52 @@ export function DbToolsPanel() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const importSqlite = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.db,.sqlite,.sqlite3';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      setLoading(true);
+      try {
+        const buf = await file.arrayBuffer();
+        const data = new Uint8Array(buf);
+        // 用 sql.js 验证文件格式
+        const wasmResp = await fetch('/sql-wasm.wasm');
+        const wasmBinary = await wasmResp.arrayBuffer();
+        const SQL = await initSqlJs({ wasmBinary });
+        const testDb = new SQL.Database(data);
+        testDb.close(); // 验证通过，关闭
+
+        // 直接写入 IndexedDB，刷新后 connection.ts 会加载新数据
+        await new Promise<void>((resolve, reject) => {
+          const req = indexedDB.open('lyrichord', 1);
+          req.onupgradeneeded = () => {
+            const idb = req.result;
+            if (!idb.objectStoreNames.contains('databases')) {
+              idb.createObjectStore('databases');
+            }
+          };
+          req.onsuccess = () => {
+            const tx = req.result.transaction('databases', 'readwrite');
+            tx.objectStore('databases').put(data, 'main.db');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          };
+          req.onerror = () => reject(req.error);
+        });
+
+        setLog(`已导入 ${file.name}，即将刷新页面...`);
+        setTimeout(() => window.location.reload(), 800);
+      } catch (e) {
+        setLog('导入失败: ' + (e instanceof Error ? e.message : String(e)));
+        setLoading(false);
+      }
+    };
+    input.click();
   }, []);
 
   const exportJson = useCallback(async () => {
@@ -191,6 +238,11 @@ export function DbToolsPanel() {
         <button className="btn-tiny" onClick={exportJson} disabled={loading}
           style={{ padding: '4px 12px', fontSize: 13 }}>
           导出 JSON
+        </button>
+        <span style={{ width: 1, background: 'var(--border)', margin: '0 2px' }} />
+        <button className="btn-tiny" onClick={importSqlite} disabled={loading}
+          style={{ padding: '4px 12px', fontSize: 13 }}>
+          导入 SQLite
         </button>
       </div>
 

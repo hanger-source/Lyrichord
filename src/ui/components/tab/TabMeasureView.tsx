@@ -3,10 +3,10 @@
  *
  * 包含：小节号 + 拍号标签行 + 和弦区间行 + 弦线区
  */
-import type { TabMeasure, ChordRegion, ChordSelectionPending } from '../TabEditor';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import type { TabMeasure } from '../TabEditor';
 
 // ---- 常量 ----
-const STRING_NAMES = ['e', 'B', 'G', 'D', 'A', 'E'];
 const STRING_COUNT = 6;
 const BASE_W = 36;
 const MIN_W = 14;
@@ -14,7 +14,7 @@ const MIN_W = 14;
 // ---- 工具函数 ----
 export function beatWidth(b: { weight: number }): number { return Math.max(MIN_W, Math.round(b.weight * BASE_W)); }
 export function beatX(m: TabMeasure, bi: number): number { let x = 0; for (let i = 0; i < bi; i++) x += beatWidth(m.beats[i]); return x; }
-export function measureWidth(m: TabMeasure): number { return m.beats.reduce((s, b) => s + beatWidth(b), 0) + 2; }
+export function measureWidth(m: TabMeasure): number { return m.beats.reduce((s, b) => s + beatWidth(b), 0) + 10; }
 
 type BeatKind = 'normal' | 'split' | 'merged';
 function beatKind(b: { weight: number }): BeatKind { if (b.weight < 1) return 'split'; if (b.weight > 1) return 'merged'; return 'normal'; }
@@ -62,7 +62,6 @@ interface TabMeasureViewProps {
   onChordMouseDown: (bi: number) => void;
   onChordMouseEnter: (bi: number) => void;
   onChordClick: (chordName: string, positionIndex?: number, fromBeat?: number) => void;
-  onChordRemove: (bi: number) => void;
   onPendingSelClear: () => void;
   // 弦线
   focusedCell: { mi: number; bi: number; si: number } | null;
@@ -70,6 +69,11 @@ interface TabMeasureViewProps {
   cellDisplay: (bi: number, si: number) => string;
   // 和弦选中高亮
   activeChord: { mi: number; fromBeat: number } | null;
+  // 小节操作（右键菜单）
+  onInsertMeasureBefore: () => void;
+  onInsertMeasureAfter: () => void;
+  onDeleteMeasure: () => void;
+  measureCount: number;
 }
 
 export function TabMeasureView({
@@ -77,13 +81,34 @@ export function TabMeasureView({
   isBeatSelected, onBeatDragStart, onBeatDragEnter,
   isRhythmSelected, onRhythmDragStart, onRhythmDragEnter,
   isDragHL, isPendingHL, onChordMouseDown, onChordMouseEnter,
-  onChordClick, onChordRemove, onPendingSelClear,
+  onChordClick, onPendingSelClear,
   focusedCell, onStringClick, cellDisplay,
   activeChord,
+  onInsertMeasureBefore, onInsertMeasureAfter, onDeleteMeasure, measureCount,
 }: TabMeasureViewProps) {
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const ctxRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = (e: MouseEvent) => {
+      if (ctxRef.current && !ctxRef.current.contains(e.target as Node)) setCtxMenu(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [ctxMenu]);
+
+  const handleBarlineClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
   return (
     <div className="tab-measure-wrap">
-      <div className="tab-measure-num">{mi + 1}</div>
+      <div className="tab-measure-num">
+        {mi + 1}
+      </div>
       <div className="tab-measure-body">
         {/* 拍号标签行 */}
         <div className="tab-beat-labels-row">
@@ -116,8 +141,7 @@ export function TabMeasureView({
             <div key={ci} className={`tab-chord-region ${isActive ? 'tab-chord-region--active' : ''}`}
               style={{ left: beatX(m, c.fromBeat), width: beatX(m, c.toBeat) - beatX(m, c.fromBeat) }}
               onClick={e => { e.stopPropagation(); onPendingSelClear(); onChordClick(c.name, c.positionIndex, c.fromBeat); }}
-              onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
-              onContextMenu={e => { e.preventDefault(); onChordRemove(c.fromBeat); }}>
+              onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}>
               <span className="tab-chord-region-name">{c.name}</span>
             </div>
             );
@@ -159,7 +183,12 @@ export function TabMeasureView({
               </div>
             );
           })}
-          <div className="tab-barline" />
+          <div className="tab-barline-zone"
+            title="点击管理小节"
+            onClick={handleBarlineClick}
+          >
+            <div className="tab-barline" />
+          </div>
         </div>
         {/* 底部节奏型拖选行 */}
         <div className="tab-rhythm-drag-row">
@@ -178,6 +207,15 @@ export function TabMeasureView({
           })}
         </div>
       </div>
+      {ctxMenu && (
+        <div ref={ctxRef} className="tab-measure-ctx-menu" style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y, zIndex: 100 }}>
+          <div className="tab-ctx-menu-item" onClick={() => { onInsertMeasureBefore(); setCtxMenu(null); }}>前插小节</div>
+          <div className="tab-ctx-menu-item" onClick={() => { onInsertMeasureAfter(); setCtxMenu(null); }}>后插小节</div>
+          {measureCount > 1 && (
+            <div className="tab-ctx-menu-item tab-ctx-menu-item--danger" onClick={() => { onDeleteMeasure(); setCtxMenu(null); }}>删除小节</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
