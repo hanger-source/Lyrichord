@@ -416,7 +416,9 @@ function generateMeasure(
     const durStr = durationToAlphaTex(durVal);
 
     const props: string[] = [];
-    if (ev.chordId) props.push(`ch "${ev.chordId}"`);
+    if (ev.chordId) {
+      props.push(`ch "${ev.chordId}"`);
+    }
 
     if (!ev.frets) {
       const propsStr = wrapProps(props);
