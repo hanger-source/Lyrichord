@@ -33,6 +33,8 @@ import { useRef, useEffect, useCallback, useState, memo } from 'react';
 import * as alphaTab from '@coderline/alphatab';
 import { Play, Pause, Square, RotateCcw, Loader } from 'lucide-react';
 import { initChordTooltip, destroyChordTooltip } from '../chord-tooltip';
+import { postProcessScore, patchLoadMidiForScore, type PostProcessOptions } from '../../core/post-process/score-post-process';
+import { createMarkerOverlapFixer } from '../../core/post-process/marker-overlap-fix';
 import type { PipelineResult } from '../../core/pipeline';
 import type { PlaybackState } from '../hooks/useAppState';
 import type { ColorTokens } from '../theme';
@@ -64,9 +66,16 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
   const [totalTime, setTotalTime] = useState(0);
   // 播放中标记 — 用 ref 避免闭包过期，IntersectionObserver 回调里能拿到最新值
   const isPlayingRef = useRef(false);
+  // 保存 score model 引用，用于 renderFinished 里恢复 isDead
+  const scoreRef = useRef<any>(null);
   // 播放进度用 ref 缓冲 + rAF 节流，避免高频 setState 阻塞主线程
   const pendingTimeRef = useRef<{ current: number; end: number } | null>(null);
   const rafIdRef = useRef(0);
+  // x 品位标记开关（localStorage 持久化）
+  const [showXMarks, setShowXMarks] = useState(() => {
+    try { return localStorage.getItem('lyrichord-x-marks') !== '0'; } catch { return true; }
+  });
+  const showXMarksRef = useRef(showXMarks);
 
   // ── AlphaTab 初始化 (只执行一次) ──────────────────────────
   // 使用 SettingsJson 对象（官方 vite-react 示例推荐方式）
@@ -96,6 +105,7 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
           effectLyrics: true,        // 显示歌词
           effectChordNames: true,    // 显示和弦名
           chordDiagrams: true,       // 显示和弦指法图（每个和弦首次出现时）
+          chordDiagramFretboardNumbers: true, // 和弦图品位数字
           effectMarker: true,        // 显示段落标记 (Intro/Verse/Chorus)
           effectTempo: true,         // 显示速度标记
           effectCapo: false,
@@ -117,6 +127,11 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
     const api = new alphaTab.AlphaTabApi(containerRef.current, settings);
     apiRef.current = api;
 
+    // ── monkey-patch loadMidiForScore ──────────────────────
+    // MIDI 生成前临时恢复 isDead=false，生成后改回 true。
+    // 详见 src/core/post-process/score-post-process.ts
+    patchLoadMidiForScore(api, scoreRef);
+
     api.renderStarted.on(() => setIsRendering(true));
     api.renderFinished.on(() => setIsRendering(false));
 
@@ -129,73 +144,10 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
       console.error('AlphaTab error:', e);
     });
 
-    // ── let ring 注入 ──────────────────────────────────────
-    // 吉他拨弦后的余音衰减效果。在 score model 加载后遍历所有音符，
-    // 给非 dead note / 非 palm mute 的音符设置 isLetRing = true。
-    //
-    // 为什么不在 AlphaTex 里加 {lr}:
-    //   1. 会让 AlphaTex 文本膨胀（每个音符都要加）
-    //   2. scoreLoaded 回调直接改 model 更干净
-    //
-    // 为什么不用 SustainPedalMarker:
-    //   AlphaTab 的 SustainPedalMarker 构造函数未导出为公开 API，
-    //   运行时会报 "not a constructor" 错误。
     api.scoreLoaded.on((score: any) => {
       if (!score) return;
-
-      // ── 和弦图显示位置 ──────────────────────────────────
-      // globalDisplayChordDiagramsOnTop: 谱头汇总（默认 true）
-      // globalDisplayChordDiagramsInScore: 谱内小节上方（默认 false）
-      // 两者可以同时开启，这里开启谱内显示，关闭谱头汇总
-      if (score.stylesheet) {
-        score.stylesheet.globalDisplayChordDiagramsOnTop = true;
-        score.stylesheet.globalDisplayChordDiagramsInScore = true;
-      }
-
-      for (const track of score.tracks) {
-        for (const staff of track.staves) {
-          for (const bar of staff.bars) {
-            for (const voice of bar.voices) {
-              for (const beat of voice.beats) {
-                for (const note of beat.notes) {
-                  // 跳过 dead note 和 palm mute
-                  if (!note.isDead && !note.isPalmMute) {
-                    note.isLetRing = true;
-                  }
-                }
-              }
-            }
-          }
-
-          // ── chord diagram firstFret 自动计算 ──────────────
-          // AlphaTab \chord 传的是绝对品位，渲染时用 fret -= (firstFret-1)
-          // 转为网格相对位置。网格只有 5 格，所以高把位和弦必须设置 firstFret。
-          //
-          // staff.chords 是 Map<string, Chord> | null
-          // Chord.strings: number[] — 从高弦(1弦)到低弦(6弦)，-1=不弹
-          // Chord.firstFret: number — 默认 1
-          //
-          // 规则:
-          //   minFret <= 4  → firstFret=1（低把位，画琴枕粗线）
-          //   minFret >= 5  → firstFret=minFret（高把位，左侧标起始品位号）
-          //
-          // AlphaTab 渲染逻辑:
-          //   firstFret=1 → 画琴枕粗线，不标品位号
-          //   firstFret>1 → 不画琴枕，左侧标品位号
-          if (staff.chords) {
-            for (const [, chord] of staff.chords) {
-              if (!chord || !chord.strings) continue;
-              const played = chord.strings.filter((f: number) => f > 0);
-              if (played.length === 0) continue;
-              const minFret = Math.min(...played);
-              if (minFret >= 5) {
-                chord.firstFret = minFret;
-              }
-              // minFret <= 4: 保持默认 firstFret=1（琴枕粗线 + 从第1品开始画）
-            }
-          }
-        }
-      }
+      scoreRef.current = score;
+      postProcessScore(score, { enableXMarks: showXMarksRef.current });
     });
 
     api.playerStateChanged.on(e => {
@@ -234,64 +186,9 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
 
     initChordTooltip(containerRef.current);
 
-    // ── Marker/Chord 重叠修复 hack ──────────────────────────
-    // AlphaTab bug: section marker (段落名) 和 chord name 放在同一个
-    // effect band slot（相同 Y 坐标），导致文字重叠。
-    // 修复方式: 渲染完成后用 DOM 操作把 Marker + Tempo 整体上移。
-    //
-    // 识别方式:
-    //   - 段落名: <text> 元素，bold Georgia 字体，左对齐
-    //   - BPM: 同上但内容匹配 /=\s*\d/（如 "♩= 72"）
-    //   - 音符符号: <g class="at"> 内的 Bravura 字体文本
-    const SECTION_SHIFT = -32;  // 段落名偏移量 (px)
-    const TEMPO_SHIFT = -16;    // BPM/音符符号偏移
-    const fixMarkerOverlap = () => {
-      if (!containerRef.current) return;
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          if (!containerRef.current) return;
-          const texts = containerRef.current.querySelectorAll('text');
-          for (const t of texts) {
-            if (t.hasAttribute('data-marker-fixed')) continue;
-            const style = t.getAttribute('style') || '';
-            const isBoldGeorgia = /\bbold\b/.test(style) && /Georgia/i.test(style);
-            const isLeftAligned = !t.hasAttribute('text-anchor');
-            if (isBoldGeorgia && isLeftAligned) {
-              const content = t.textContent || '';
-              const isTempo = /=\s*\d/.test(content);
-              const shift = isTempo ? TEMPO_SHIFT : SECTION_SHIFT;
-              const y = parseFloat(t.getAttribute('y') || '0');
-              t.setAttribute('y', String(y + shift));
-              t.setAttribute('data-marker-fixed', '1');
-              t.setAttribute('data-marker-type', isTempo ? 'tempo' : 'section');
-            }
-          }
-          // 移动音符符号 ♩（Bravura 音乐字体，在 <g class="at"> 里）
-          const groups = containerRef.current.querySelectorAll('g.at');
-          for (const g of groups) {
-            if (g.hasAttribute('data-marker-fixed')) continue;
-            const transform = g.getAttribute('transform') || '';
-            const match = transform.match(/translate\(\s*([\d.]+)\s+([\d.]+)\s*\)/);
-            if (!match) continue;
-            const innerText = g.querySelector('text');
-            if (!innerText) continue;
-            const innerStyle = innerText.getAttribute('style') || '';
-            if (innerStyle.includes('Georgia') || innerStyle.includes('italic')) continue;
-            const parentSvg = g.closest('svg');
-            if (!parentSvg) continue;
-            const tempoMarker = parentSvg.querySelector('text[data-marker-type="tempo"]');
-            if (!tempoMarker) continue;
-            const gY = parseFloat(match[2]);
-            const markerY = parseFloat(tempoMarker.getAttribute('y') || '0') - TEMPO_SHIFT;
-            if (Math.abs(gY - markerY) < 15) {
-              const newY = gY + TEMPO_SHIFT;
-              g.setAttribute('transform', `translate(${match[1]} ${newY})`);
-              g.setAttribute('data-marker-fixed', '1');
-            }
-          }
-        }, 50);
-      });
-    };
+    // ── Marker/Chord 重叠修复 ──────────────────────────────
+    // 详见 src/core/post-process/marker-overlap-fix.ts
+    const fixMarkerOverlap = createMarkerOverlapFixer(() => containerRef.current);
     api.postRenderFinished.on(fixMarkerOverlap);
     api.renderer.partialRenderFinished.on(fixMarkerOverlap);
 
@@ -343,6 +240,17 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
       });
     }
   }, [visible]);
+
+  // x 标记开关切换 → 重新处理 score model 并 re-render
+  useEffect(() => {
+    showXMarksRef.current = showXMarks;
+    try { localStorage.setItem('lyrichord-x-marks', showXMarks ? '1' : '0'); } catch {}
+    const score = scoreRef.current;
+    const api = apiRef.current;
+    if (!score || !api) return;
+    postProcessScore(score, { enableXMarks: showXMarks });
+    api.render();
+  }, [showXMarks]);
 
   // BPM 同步
   useEffect(() => {
@@ -426,6 +334,18 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
           曲谱预览
           {measureCount > 0 && <span className="measure-count">{measureCount} 小节</span>}
           {isRendering && <span className="rendering-indicator">渲染中...</span>}
+          <button
+            className={`btn-player ${showXMarks ? 'btn-player--active' : ''}`}
+            onClick={() => setShowXMarks(v => !v)}
+            title={showXMarks ? '关闭和弦 x 标记（显示品位数字）' : '开启和弦 x 标记'}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <line x1="0" y1="3" x2="14" y2="3" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+              <line x1="0" y1="7" x2="14" y2="7" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+              <line x1="0" y1="11" x2="14" y2="11" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+              <text x="7" y="10.5" textAnchor="middle" fill="currentColor" fontSize="11" fontWeight="900" fontFamily="system-ui, sans-serif">x</text>
+            </svg>
+          </button>
         </span>
         <div className="player-controls">
           <button className="btn-player" onClick={handleRestart} disabled={!playerReady} title="从头播放">
