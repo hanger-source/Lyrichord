@@ -35,8 +35,8 @@ export interface TabBeat {
   weight: number;
   group: number;
   rest?: boolean;
-  /** 扫弦方向: 'bd'=brush down, 'bu'=brush up, 'ds'=dead slap */
-  brush?: 'bd' | 'bu' | 'ds';
+  /** 扫弦方向: 'ad'=arpeggio down, 'au'=arpeggio up, 'ds'=dead slap */
+  brush?: 'ad' | 'au' | 'ds';
 }
 
 export interface TabMeasure {
@@ -134,7 +134,9 @@ function mToTex(m: TabMeasure, measures: TabMeasure[], mi: number): string {
       parts.push(`${pfx}${notes[0].fret}.${notes[0].str}.${dur}`);
     }
     else {
-      const bm = beat.brush ? ` {${beat.brush}}` : '';
+      const bm = beat.brush
+        ? ` {${beat.brush}${beat.brush !== 'ds' ? ' 60' : ''}}`
+        : '';
       parts.push(`${pfx}(${notes.map(n => `${n.fret}.${n.str}`).join(' ')}).${dur}${bm}`);
     }
   }
@@ -411,8 +413,8 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
             }
             // 保存扫弦方向
             if (ev?.isDeadNote) beat.brush = 'ds';
-            else if (ev?.brushDirection === 'down') beat.brush = 'bd';
-            else if (ev?.brushDirection === 'up') beat.brush = 'bu';
+            else if (ev?.brushDirection === 'down') beat.brush = 'ad';
+            else if (ev?.brushDirection === 'up') beat.brush = 'au';
             else beat.brush = undefined;
             beat.strings = strings;
           }

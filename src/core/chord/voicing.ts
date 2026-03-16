@@ -20,7 +20,7 @@ export function getFretOnString(frets: GuitarFrets, str: number): number {
   return frets[idx];
 }
 
-/** 获取所有有效弦音符 (6→1 顺序) */
+/** 获取所有有效弦音符 (6→1 顺序，string 6=E低音弦) */
 export function getPlayableNotes(frets: GuitarFrets): Note[] {
   const notes: Note[] = [];
   for (let i = 0; i < frets.length; i++) {
