@@ -27,7 +27,7 @@
 
 .chord-panel-layout { padding: 0; gap: 0; flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .chord-panel-fixed { flex-shrink: 0; padding: 12px 12px 0; display: flex; flex-direction: column; gap: 8px; }
-.chord-panel-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; }
+.chord-panel-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px 12px; }
 
 .panel-header {
   display: flex; align-items: center; justify-content: space-between;

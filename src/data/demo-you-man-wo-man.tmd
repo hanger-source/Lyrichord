@@ -5,7 +5,7 @@ tempo: 76
 time_signature: 4/4
 capo: 2
 
-@R1: pluck(p-3-(12)-3)
+@R1: pluck(p-3-(12)-3-p-3-(12)-3)
 @R1P: pluck(p-3-2-1-2-3-(12)-3)
 @R2A: strum(D---|D-DU|X---|D-DU)
 @R2B: strum(D---|D-DU|XUDU|D-DU)

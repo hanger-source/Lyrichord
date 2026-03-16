@@ -59,11 +59,9 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
         staveProfile: 'tab',
         layoutMode: 'page',
         scale: 1.0,
-        padding: [60, 40],
-        firstSystemPaddingTop: 40,
-        systemPaddingTop: 15,
-        notationStaffPaddingTop: 8,
-        effectBandPaddingBottom: 6,
+        // --- padding 配置 ---
+        firstNotationStaffPaddingTop: 30,
+        effectBandPaddingBottom: 20,
       },
       notation: {
         rhythmMode: 'ShowWithBars',
@@ -132,6 +130,61 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
     });
 
     initChordTooltip(containerRef.current);
+
+    // 修复 Marker/Chord 同行重叠：AlphaTab 把 section marker 和 chord name
+    // 放在同一个 effect band slot（相同 Y 坐标），导致文字重叠。
+    // 渲染完成后把 Marker + Tempo（段落名、BPM、音符符号）整体上移。
+    const SECTION_SHIFT = -32;  // 段落名偏移
+    const TEMPO_SHIFT = -16;    // BPM/音符符号偏移
+    const fixMarkerOverlap = () => {
+      if (!containerRef.current) return;
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (!containerRef.current) return;
+          const texts = containerRef.current.querySelectorAll('text');
+          for (const t of texts) {
+            if (t.hasAttribute('data-marker-fixed')) continue;
+            const style = t.getAttribute('style') || '';
+            const isBoldGeorgia = /\bbold\b/.test(style) && /Georgia/i.test(style);
+            const isLeftAligned = !t.hasAttribute('text-anchor');
+            if (isBoldGeorgia && isLeftAligned) {
+              const content = t.textContent || '';
+              const isTempo = /=\s*\d/.test(content);
+              const shift = isTempo ? TEMPO_SHIFT : SECTION_SHIFT;
+              const y = parseFloat(t.getAttribute('y') || '0');
+              t.setAttribute('y', String(y + shift));
+              t.setAttribute('data-marker-fixed', '1');
+              t.setAttribute('data-marker-type', isTempo ? 'tempo' : 'section');
+            }
+          }
+          // 移动音符符号 ♩（Bravura 音乐字体，在 <g class="at"> 里）
+          const groups = containerRef.current.querySelectorAll('g.at');
+          for (const g of groups) {
+            if (g.hasAttribute('data-marker-fixed')) continue;
+            const transform = g.getAttribute('transform') || '';
+            const match = transform.match(/translate\(\s*([\d.]+)\s+([\d.]+)\s*\)/);
+            if (!match) continue;
+            const innerText = g.querySelector('text');
+            if (!innerText) continue;
+            const innerStyle = innerText.getAttribute('style') || '';
+            if (innerStyle.includes('Georgia') || innerStyle.includes('italic')) continue;
+            const parentSvg = g.closest('svg');
+            if (!parentSvg) continue;
+            const tempoMarker = parentSvg.querySelector('text[data-marker-type="tempo"]');
+            if (!tempoMarker) continue;
+            const gY = parseFloat(match[2]);
+            const markerY = parseFloat(tempoMarker.getAttribute('y') || '0') - TEMPO_SHIFT;
+            if (Math.abs(gY - markerY) < 15) {
+              const newY = gY + TEMPO_SHIFT;
+              g.setAttribute('transform', `translate(${match[1]} ${newY})`);
+              g.setAttribute('data-marker-fixed', '1');
+            }
+          }
+        }, 50);
+      });
+    };
+    api.postRenderFinished.on(fixMarkerOverlap);
+    api.renderer.partialRenderFinished.on(fixMarkerOverlap);
 
     // 容器重新可见时触发重新渲染（解决 display:none 后恢复白屏）
     // 播放中跳过，避免 re-render 阻塞主线程导致音频卡顿

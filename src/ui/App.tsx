@@ -13,6 +13,7 @@ import { ScorePane } from './components/ScorePane';
 import { TabWorkspace } from './components/TabWorkspace';
 import type { TabWorkspaceHandle } from './components/TabWorkspace';
 import type { ChordSelectionPending } from './components/TabEditor';
+import type { RhythmPattern } from '../core/types';
 import { applyTheme, lightColors, darkColors, layout } from './theme';
 import type { ColorTokens } from './theme';
 import { tmdToAlphaTex, type PipelineResult } from '../core/pipeline';
@@ -86,6 +87,11 @@ export function App() {
   // Sidebar 切换指法变体 → 更新 TAB 里同名和弦的 positionIndex
   const handleChordPositionChange = useCallback((chordName: string, positionIndex: number) => {
     tabWorkspaceRef.current?.updateChordPosition(chordName, positionIndex);
+  }, []);
+
+  // Sidebar 节奏型库选中节奏型 → 应用到 TAB 段落
+  const handleRhythmPicked = useCallback((rhythm: RhythmPattern) => {
+    tabWorkspaceRef.current?.applyRhythm(rhythm);
   }, []);
 
   // 稳定引用 — 避免破坏 Sidebar/ScorePane 的 memo
@@ -208,6 +214,7 @@ export function App() {
             highlightChord={highlightChord}
             onHighlightClear={handleHighlightClear}
             onChordPositionChange={editorMode === 'tab' ? handleChordPositionChange : undefined}
+            onRhythmPick={editorMode === 'tab' ? handleRhythmPicked : undefined}
           />
         </div>
       </div>

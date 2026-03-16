@@ -121,7 +121,7 @@ export function useAppState(initialTmd: string) {
     try { localStorage.setItem(PROJECT_KEY, JSON.stringify({ id: activeProjectId, title: activeProjectTitle })); } catch {}
   }, [activeProjectId, activeProjectTitle]);
 
-  const runPipeline = useCallback((source: string) => {
+  const runPipeline = useCallback((source: string, opts?: { syncRhythms?: boolean }) => {
     // 展开 @segment(Name) 引用
     const expanded = expandSegmentRefs(source, (name) => {
       const seg = segmentCacheRef.current.find(s => s.name === name);
@@ -139,9 +139,13 @@ export function useAppState(initialTmd: string) {
     // 异步同步节奏型和自定义和弦到 DB，完成后刷新补全候选
     if (result.song) {
       const syncTasks: Promise<unknown>[] = [];
-      const rhythms = Array.from(result.song.rhythmLibrary.values());
-      if (rhythms.length > 0) {
-        syncTasks.push(bulkUpsertRhythms(rhythms, 'score'));
+      // 只在明确要求时同步节奏型（避免旧项目 TMD 覆盖新定义）
+      if (opts?.syncRhythms !== false) {
+        const rhythms = Array.from(result.song.rhythmLibrary.values());
+        if (rhythms.length > 0) {
+          console.log('[Pipeline] 同步节奏型到 DB:', rhythms.map(r => `${r.id}(${r.slots.length} slots)`).join(', '));
+          syncTasks.push(bulkUpsertRhythms(rhythms, 'score'));
+        }
       }
       const customChords = Array.from(result.song.chordLibrary.values());
       if (customChords.length > 0) {
@@ -218,7 +222,7 @@ export function useAppState(initialTmd: string) {
         setCurrentScoreId(ver.scoreId);
         setCurrentVersionId(ver.id);
         setTmdSourceRaw(ver.tmdSource);
-        runPipeline(ver.tmdSource);
+        runPipeline(ver.tmdSource, { syncRhythms: false });
       }
     } catch (e) {
       console.error('加载版本失败:', e);
@@ -263,7 +267,7 @@ export function useAppState(initialTmd: string) {
         if (ver) {
           setCurrentVersionId(ver.id);
           setTmdSourceRaw(ver.tmdSource);
-          runPipeline(ver.tmdSource);
+          runPipeline(ver.tmdSource, { syncRhythms: false });
           return;
         }
       } catch (e) {
@@ -313,7 +317,7 @@ export function useAppState(initialTmd: string) {
           if (ver) {
             setCurrentVersionId(ver.id);
             setTmdSourceRaw(ver.tmdSource);
-            runPipeline(ver.tmdSource);
+            runPipeline(ver.tmdSource, { syncRhythms: false });
           }
           return;
         }
@@ -329,7 +333,7 @@ export function useAppState(initialTmd: string) {
         if (ver) {
           setCurrentVersionId(ver.id);
           setTmdSourceRaw(ver.tmdSource);
-          runPipeline(ver.tmdSource);
+          runPipeline(ver.tmdSource, { syncRhythms: false });
         }
       }
     })().catch(console.error);

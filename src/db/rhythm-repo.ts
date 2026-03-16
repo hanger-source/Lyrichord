@@ -82,7 +82,9 @@ export async function bulkUpsertRhythms(
       db.run(
         `INSERT INTO rhythm_patterns (id, type, raw, slots_json, speed, source)
          VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO NOTHING`,
+         ON CONFLICT(id) DO UPDATE SET
+           type=excluded.type, raw=excluded.raw, slots_json=excluded.slots_json,
+           speed=excluded.speed, source=excluded.source, updated_at=datetime('now')`,
         [p.id, p.type, p.raw, JSON.stringify(p.slots), p.speed ?? null, source]
       );
       count++;

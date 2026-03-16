@@ -8,6 +8,8 @@ import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, for
 import * as Collapsible from '@radix-ui/react-collapsible';
 import { resolveChord } from '../../core/chord/resolver';
 import { parseTmdToMeasures } from '../../core/tmd-to-measures';
+import { expandRhythm } from '../../core/rhythm/expander';
+import type { RhythmPattern, GuitarFrets } from '../../core/types';
 import { TabToolbar } from './tab/TabToolbar';
 import { TabMeasureView, measureWidth, beatWidth } from './tab/TabMeasureView';
 
@@ -262,6 +264,8 @@ export interface TabEditorHandle {
   triggerSave: () => void;
   /** 更新所有同名和弦的 positionIndex */
   updateChordPosition: (chordName: string, positionIndex: number) => void;
+  /** 应用节奏型到所有有和弦的小节 */
+  applyRhythm: (rhythm: RhythmPattern) => void;
 }
 
 export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function TabEditor({
@@ -285,6 +289,11 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   const bpmRef = useRef(initialBpm);
   const tsLabelRef = useRef(initialTsLabel);
 
+  // ---- Undo / Redo (refs 提前声明，供 useImperativeHandle 使用) ----
+  const undoStack = useRef<string[]>([]);
+  const redoStack = useRef<string[]>([]);
+  const lastSnapshot = useRef('');
+
   useImperativeHandle(ref, () => ({
     triggerSave() {
       onSave?.(measuresRef.current, tempoRef.current, bpmRef.current, tsLabelRef.current);
@@ -307,12 +316,79 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         return anyChanged ? next : prev;
       });
     },
+    applyRhythm(rhythm: RhythmPattern) {
+      setMeasures(prev => {
+        // push undo snapshot
+        const snap = JSON.stringify(prev);
+        undoStack.current.push(snap);
+        if (undoStack.current.length > 50) undoStack.current.shift();
+        redoStack.current = [];
+        lastSnapshot.current = snap;
+
+        // 节奏型统一代表一整小节，slot 时值 = 小节总拍数 / slot 数量
+        return prev.map(m => {
+          if (m.chords.length === 0) return m;
+          const next = structuredClone(m);
+
+          const totalBeats = next.beats.reduce((s, b) => s + b.weight, 0);
+          const slotCount = rhythm.slots.length;
+          const beatsPerSlot = totalBeats / slotCount;
+
+          // 计算每个 beat 的绝对拍位（累加 weight）
+          const beatPositions: number[] = [];
+          let pos = 0;
+          for (const b of next.beats) {
+            beatPositions.push(pos);
+            pos += b.weight;
+          }
+
+          // 按小节内绝对位置映射 slot，不按和弦区间重置
+          for (let bi = 0; bi < next.beats.length; bi++) {
+            // 找当前拍位所属的和弦区间
+            const chord = next.chords.find(c => c.fromBeat <= bi && bi < c.toBeat);
+            if (!chord) continue; // 没有和弦覆盖的拍位不动
+
+            const def = resolveChord(chord.name);
+            if (!def) continue;
+            const posIdx = chord.positionIndex ?? 0;
+            const cpos = def.positions?.[posIdx];
+            const frets: GuitarFrets = cpos
+              ? cpos.frets.map(f => f <= 0 ? f : f + cpos.baseFret - 1) as GuitarFrets
+              : def.frets;
+
+            const beat = next.beats[bi];
+            // slot 索引基于小节内绝对位置
+            const slotIdx = Math.floor(beatPositions[bi] / beatsPerSlot) % slotCount;
+            const slot = rhythm.slots[slotIdx];
+            const strings = emptyStrings();
+
+            // sustain → 空弦线（延音）
+            if (slot.kind === 'strum' && slot.action === 'sustain') {
+              beat.strings = strings;
+              continue;
+            }
+
+            const events = expandRhythm(rhythm.type, [slot], frets);
+            const ev = events[0];
+            if (ev && !ev.isRest && !ev.isSustain) {
+              for (const note of ev.notes) {
+                const si = note.string - 1;
+                if (si >= 0 && si < 6) {
+                  strings[si] = ev.isDeadNote
+                    ? { type: 'custom', fret: 0 }
+                    : { type: 'custom', fret: note.fret };
+                }
+              }
+            }
+            beat.strings = strings;
+          }
+          return next;
+        });
+      });
+    },
   }), [onSave]);
 
-  // ---- Undo / Redo ----
-  const undoStack = useRef<string[]>([]);
-  const redoStack = useRef<string[]>([]);
-  const lastSnapshot = useRef('');
+  // ---- Undo / Redo (callbacks) ----
   const pushUndo = useCallback((prev: TabMeasure[]) => {
     const snap = JSON.stringify(prev);
     if (snap === lastSnapshot.current) return;
