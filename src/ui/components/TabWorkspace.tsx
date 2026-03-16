@@ -180,64 +180,20 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
   const pendingSaveRef = useRef<{ measures: TabMeasure[]; tempo: number; bpm: number; tsLabel: string } | null>(null);
 
   /**
-   * 把项目下所有 segment 拼成一份完整 TMD
-   * 已保存段落用 DB 数据，当前活跃段落用编辑器实时 measures
+   * 只预览当前编辑中的段落（不拼接所有段落）
    */
   const rebuildFullTmd = useCallback(() => {
-    const allChordRegions: import('./TabEditor').ChordRegion[] = [];
-    const seenChords = new Set<string>();
-    const bodies: string[] = [];
-    let headerTempo = 72;
-    let headerTs = '4/4';
+    if (!currentMeasuresRef.current) { onTmdChange?.(''); return; }
 
-    for (const seg of segments) {
-      // 活跃段落用实时 measures
-      if (seg.id === activeSegId && currentMeasuresRef.current) {
-        const { measures: liveMeasures, name } = currentMeasuresRef.current;
-        const { body, usedChords } = genSectionBody(liveMeasures, name || seg.name);
-        if (body) {
-          bodies.push(body);
-          for (const c of usedChords) {
-            if (!seenChords.has(c.name)) { seenChords.add(c.name); allChordRegions.push(c); }
-          }
-        }
-        headerTempo = seg.tempo; headerTs = seg.tsLabel;
-        continue;
-      }
-      try {
-        const measures = JSON.parse(seg.measuresJson) as TabMeasure[];
-        const { body, usedChords } = genSectionBody(measures, seg.name);
-        if (body) {
-          bodies.push(body);
-          for (const c of usedChords) {
-            if (!seenChords.has(c.name)) { seenChords.add(c.name); allChordRegions.push(c); }
-          }
-        }
-      } catch (e) {
-        console.warn(`段落 ${seg.name} 解析失败:`, e);
-      }
-      if (bodies.length === 1) { headerTempo = seg.tempo; headerTs = seg.tsLabel; }
-    }
+    const { measures, name } = currentMeasuresRef.current;
+    const { body, usedChords } = genSectionBody(measures, name || '新段落');
+    if (!body) { onTmdChange?.(''); return; }
 
-    // 新段落（未保存，activeSegId 为 null）
-    if (!activeSegId && currentMeasuresRef.current) {
-      const { measures: liveMeasures, name } = currentMeasuresRef.current;
-      const { body, usedChords } = genSectionBody(liveMeasures, name || '新段落');
-      if (body) {
-        bodies.push(body);
-        for (const c of usedChords) {
-          if (!seenChords.has(c.name)) { seenChords.add(c.name); allChordRegions.push(c); }
-        }
-      }
-    }
-
-    if (bodies.length === 0) { onTmdChange?.(''); return; }
-
-    const chordDefs = genChordDefs(allChordRegions);
-    const header = genTmdHeader(headerTempo, headerTs, chordDefs);
-    const fullTmd = `${header}\n\n${bodies.join('\n\n')}\n`;
-    onTmdChange?.(fullTmd);
-  }, [segments, activeSegId, onTmdChange]);
+    const chordDefs = genChordDefs(usedChords);
+    const header = genTmdHeader(editorTempo, editorTsLabel, chordDefs);
+    const tmd = `${header}\n\n${body}\n`;
+    onTmdChange?.(tmd);
+  }, [editorTempo, editorTsLabel, onTmdChange]);
 
   // 保持 ref 同步
   rebuildRef.current = rebuildFullTmd;
@@ -263,7 +219,7 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
       setActiveSegId(rec.id);
       setSegmentName(rec.name);
       showSaveMsg(`已保存「${rec.name}」`);
-      const latest = await refreshSegments();
+      await refreshSegments();
       rebuildFullTmd();
       onSegmentSaved?.();
     } catch (e) {

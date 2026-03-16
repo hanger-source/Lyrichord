@@ -208,18 +208,25 @@ export function TabMeasureView({
             <div className="tab-barline" />
           </div>
         </div>
-        {/* 底部节奏型拖选行 */}
+        {/* 底部节奏型行 — 显示扫弦/拨弦方向 */}
         <div className="tab-rhythm-drag-row">
           {m.beats.map((b, bi) => {
             const w = beatWidth(b);
             const sel = isRhythmSelected(bi);
+            // 根据 brush 显示节奏型符号
+            let icon = '♩';
+            if (b.brush === 'ad') icon = '↓';
+            else if (b.brush === 'au') icon = '↑';
+            else if (b.brush === 'ds') icon = 'X';
+            // 检查是否有弦内容但没有 brush（拨弦）
+            else if (b.strings.some(s => s.type !== 'none') && !b.rest) icon = '·';
             return (
               <div key={bi}
                 className={`tab-rhythm-drag-cell ${sel ? 'selected' : ''}`}
                 style={{ width: w, borderLeft: beatBorderLeft(b, bi, m) }}
                 onMouseDown={e => { e.preventDefault(); onRhythmDragStart(bi); }}
                 onMouseEnter={() => onRhythmDragEnter(bi)}>
-                <span className="tab-rhythm-drag-icon">♩</span>
+                <span className="tab-rhythm-drag-icon">{icon}</span>
               </div>
             );
           })}

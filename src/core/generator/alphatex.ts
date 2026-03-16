@@ -490,8 +490,13 @@ function slotToNotes(
   if (slot.kind === 'strum') {
     if (slot.action === 'sustain') return { notes: [] };
     const all = getAllPlayable(frets);
+    // brush duration (弦间延迟): 下扫 60ms, 上扫 50ms
+    // 上扫比下扫快 10ms — 模拟真实手腕回弹 vs 重力顺势的速度差异
+    // 调参历史: 默认→120ms(太慢)→40ms(太像拨)→60/50ms(当前)
+    // 注意: 与 tab-tmd-gen.ts 的 brush duration 保持同步
     if (slot.action === 'down') return { notes: all, brush: 'ad 60' };
-    if (slot.action === 'up') return { notes: all, brush: 'au 60' };
+    if (slot.action === 'up') return { notes: all, brush: 'au 50' };
+    // ds (dead stroke) 不接受 duration 参数 — AlphaTab 会报 AT220
     if (slot.action === 'mute') return { notes: all, brush: 'ds' };
     return { notes: all };
   }
