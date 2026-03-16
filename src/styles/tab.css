@@ -214,3 +214,22 @@
 }
 .tab-tmd-textarea:focus { outline: none; border-color: var(--accent); }
 .tab-tmd-actions { display: flex; gap: 6px; margin-top: 6px; justify-content: flex-end; }
+
+/* 底部节奏型拖选行 */
+.tab-rhythm-drag-row { display: flex; height: 18px; }
+.tab-rhythm-drag-cell {
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; user-select: none; box-sizing: border-box;
+  transition: background 0.1s;
+}
+.tab-rhythm-drag-cell:hover { background: var(--accent-dim); }
+.tab-rhythm-drag-cell.selected { background: var(--orange-dim); border-bottom: 2px solid var(--orange); }
+.tab-rhythm-drag-icon { font-size: 10px; color: var(--text-muted); opacity: 0.5; }
+.tab-rhythm-drag-cell:hover .tab-rhythm-drag-icon { opacity: 1; color: var(--accent); }
+.tab-rhythm-drag-cell.selected .tab-rhythm-drag-icon { opacity: 1; color: var(--orange); }
+
+/* 弦名列底部节奏型标签 */
+.tab-label-rhythm-row {
+  height: 18px; display: flex; align-items: center; justify-content: flex-end;
+  font-size: 10px; color: var(--text-muted); padding-right: 4px; user-select: none;
+}
