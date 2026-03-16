@@ -95,6 +95,7 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
         elements: {
           effectLyrics: true,        // 显示歌词
           effectChordNames: true,    // 显示和弦名
+          chordDiagrams: true,       // 显示和弦指法图（每个和弦首次出现时）
           effectMarker: true,        // 显示段落标记 (Intro/Verse/Chorus)
           effectTempo: true,         // 显示速度标记
           effectCapo: false,
@@ -141,6 +142,16 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
     //   运行时会报 "not a constructor" 错误。
     api.scoreLoaded.on((score: any) => {
       if (!score) return;
+
+      // ── 和弦图显示位置 ──────────────────────────────────
+      // globalDisplayChordDiagramsOnTop: 谱头汇总（默认 true）
+      // globalDisplayChordDiagramsInScore: 谱内小节上方（默认 false）
+      // 两者可以同时开启，这里开启谱内显示，关闭谱头汇总
+      if (score.stylesheet) {
+        score.stylesheet.globalDisplayChordDiagramsOnTop = true;
+        score.stylesheet.globalDisplayChordDiagramsInScore = true;
+      }
+
       for (const track of score.tracks) {
         for (const staff of track.staves) {
           for (const bar of staff.bars) {
@@ -153,6 +164,34 @@ export const ScorePane = memo(function ScorePane({ pipelineResult, playbackState
                   }
                 }
               }
+            }
+          }
+
+          // ── chord diagram firstFret 自动计算 ──────────────
+          // AlphaTab \chord 传的是绝对品位，渲染时用 fret -= (firstFret-1)
+          // 转为网格相对位置。网格只有 5 格，所以高把位和弦必须设置 firstFret。
+          //
+          // staff.chords 是 Map<string, Chord> | null
+          // Chord.strings: number[] — 从高弦(1弦)到低弦(6弦)，-1=不弹
+          // Chord.firstFret: number — 默认 1
+          //
+          // 规则:
+          //   minFret <= 4  → firstFret=1（低把位，画琴枕粗线）
+          //   minFret >= 5  → firstFret=minFret（高把位，左侧标起始品位号）
+          //
+          // AlphaTab 渲染逻辑:
+          //   firstFret=1 → 画琴枕粗线，不标品位号
+          //   firstFret>1 → 不画琴枕，左侧标品位号
+          if (staff.chords) {
+            for (const [, chord] of staff.chords) {
+              if (!chord || !chord.strings) continue;
+              const played = chord.strings.filter((f: number) => f > 0);
+              if (played.length === 0) continue;
+              const minFret = Math.min(...played);
+              if (minFret >= 5) {
+                chord.firstFret = minFret;
+              }
+              // minFret <= 4: 保持默认 firstFret=1（琴枕粗线 + 从第1品开始画）
             }
           }
         }
