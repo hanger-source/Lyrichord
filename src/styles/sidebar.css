@@ -90,6 +90,7 @@
 .rhythm-card:hover { border-color: var(--border-hover); box-shadow: var(--shadow-sm); }
 .rhythm-card--pickable { cursor: pointer; transition: all var(--transition); }
 .rhythm-card--pickable:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); transform: translateY(-1px); }
+.rhythm-card--highlight { border-color: var(--cyan); background: var(--cyan-dim); }
 .rhythm-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-sm); }
 .rhythm-header-right { display: flex; align-items: center; gap: 6px; }
 .rhythm-id { font-size: var(--font-base); font-weight: 600; color: var(--cyan); }

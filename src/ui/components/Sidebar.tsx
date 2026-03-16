@@ -390,32 +390,39 @@ function ChordCardDef({ chord, onPick, highlight, highlightPositionIndex, onHigh
 // ============================================================
 
 const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick }: { song: Song | null; onRhythmPick?: (rhythm: RhythmPattern) => void }) {
+  const [viewMode, setViewMode] = useState<'current' | 'library'>('current');
   const [dbRhythms, setDbRhythms] = useState<RhythmPattern[]>([]);
-  const [reloadKey, setReloadKey] = useState(0);
 
-  // 从 DB 加载节奏型
+  // 从 DB 加载全部节奏型
   useEffect(() => {
-    getAllRhythms().then(setDbRhythms).catch(console.error);
-  }, [reloadKey, song]);
-
-  // 合并 DB 和 song 里的节奏型，song 优先（最新解析的 TMD）
-  const rhythms = (() => {
-    const map = new Map<string, RhythmPattern>();
-    for (const r of dbRhythms) map.set(r.id, r);
-    if (song) {
-      for (const [id, r] of song.rhythmLibrary) map.set(id, r);
+    if (viewMode === 'library') {
+      getAllRhythms().then(setDbRhythms).catch(console.error);
     }
-    return Array.from(map.values());
-  })();
+  }, [viewMode, song]);
+
+  // 当前 = TMD 里定义的
+  const currentRhythms = song ? Array.from(song.rhythmLibrary.values()) : [];
+  const rhythms = viewMode === 'current' ? currentRhythms : dbRhythms;
 
   return (
     <div className="sidebar-panel">
       <div className="panel-header">
         <h3 className="panel-title"><Drum size={14} /> 节奏型</h3>
-        <span className="panel-count">{rhythms.length} 个</span>
+        <div className="panel-tabs">
+          <button
+            className={`panel-tab ${viewMode === 'current' ? 'panel-tab--active' : ''}`}
+            onClick={() => setViewMode('current')}
+          >当前</button>
+          <button
+            className={`panel-tab ${viewMode === 'library' ? 'panel-tab--active' : ''}`}
+            onClick={() => setViewMode('library')}
+          >全部</button>
+        </div>
       </div>
       {rhythms.length === 0 ? (
-        <p className="panel-empty">当前曲目暂无节奏型定义</p>
+        <p className="panel-empty">
+          {viewMode === 'current' ? '当前曲目暂无节奏型' : '节奏型库为空'}
+        </p>
       ) : (
         <div className="rhythm-list">
           {rhythms.map(r => (

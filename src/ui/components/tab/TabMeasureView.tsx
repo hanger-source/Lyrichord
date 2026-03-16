@@ -48,10 +48,14 @@ function beatLabelContent(b: { weight: number; group: number }, bi: number, m: T
 interface TabMeasureViewProps {
   measure: TabMeasure;
   mi: number;
-  // 拍选中
+  // 拍选中（顶部，拆拍/合拍）
   isBeatSelected: (bi: number) => boolean;
   onBeatDragStart: (bi: number) => void;
   onBeatDragEnter: (bi: number) => void;
+  // 节奏型拍选中（底部）
+  isRhythmSelected: (bi: number) => boolean;
+  onRhythmDragStart: (bi: number) => void;
+  onRhythmDragEnter: (bi: number) => void;
   // 和弦拖选
   isDragHL: (bi: number) => boolean;
   isPendingHL: (bi: number) => boolean;
@@ -71,6 +75,7 @@ interface TabMeasureViewProps {
 export function TabMeasureView({
   measure: m, mi,
   isBeatSelected, onBeatDragStart, onBeatDragEnter,
+  isRhythmSelected, onRhythmDragStart, onRhythmDragEnter,
   isDragHL, isPendingHL, onChordMouseDown, onChordMouseEnter,
   onChordClick, onChordRemove, onPendingSelClear,
   focusedCell, onStringClick, cellDisplay,
@@ -155,6 +160,22 @@ export function TabMeasureView({
             );
           })}
           <div className="tab-barline" />
+        </div>
+        {/* 底部节奏型拖选行 */}
+        <div className="tab-rhythm-drag-row">
+          {m.beats.map((b, bi) => {
+            const w = beatWidth(b);
+            const sel = isRhythmSelected(bi);
+            return (
+              <div key={bi}
+                className={`tab-rhythm-drag-cell ${sel ? 'selected' : ''}`}
+                style={{ width: w, borderLeft: beatBorderLeft(b, bi, m) }}
+                onMouseDown={e => { e.preventDefault(); onRhythmDragStart(bi); }}
+                onMouseEnter={() => onRhythmDragEnter(bi)}>
+                <span className="tab-rhythm-drag-icon">♩</span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

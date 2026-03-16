@@ -9,6 +9,7 @@ import { useAppState } from './hooks/useAppState';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { EditorPane } from './components/EditorPane';
+import type { EditorPaneHandle } from './components/EditorPane';
 import { ScorePane } from './components/ScorePane';
 import { TabWorkspace } from './components/TabWorkspace';
 import type { TabWorkspaceHandle } from './components/TabWorkspace';
@@ -35,6 +36,7 @@ export function App() {
     try { localStorage.setItem('lyrichord-editor-mode', mode); } catch {}
   }, []);
   const tabWorkspaceRef = useRef<TabWorkspaceHandle>(null);
+  const editorPaneRef = useRef<EditorPaneHandle>(null);
   const [activeColors, setActiveColors] = useState<ColorTokens>(lightColors);
   // TAB 模式曲谱预览开关
   const [tabPreviewOpen, setTabPreviewOpen] = useState(true);
@@ -68,6 +70,13 @@ export function App() {
     }
   }, [state.sidebarTab, state.setSidebarTab]);
 
+  // TabEditor 底部节奏型拖选完成 → 打开侧边栏节奏型库
+  const handleRhythmSelectionStart = useCallback(() => {
+    if (state.sidebarTab !== 'rhythms') {
+      state.setSidebarTab('rhythms');
+    }
+  }, [state.sidebarTab, state.setSidebarTab]);
+
   // 侧边栏和弦库选中和弦
   // chordToApply 暂存：如果当前没有 pendingSel，先暂存和弦，等用户拖选后自动填入
   const handleChordPicked = useCallback((chordName: string, positionIndex: number) => {
@@ -89,10 +98,14 @@ export function App() {
     tabWorkspaceRef.current?.updateChordPosition(chordName, positionIndex);
   }, []);
 
-  // Sidebar 节奏型库选中节奏型 → 应用到 TAB 段落
+  // Sidebar 节奏型库选中节奏型
   const handleRhythmPicked = useCallback((rhythm: RhythmPattern) => {
-    tabWorkspaceRef.current?.applyRhythm(rhythm);
-  }, []);
+    if (editorMode === 'tab') {
+      tabWorkspaceRef.current?.applyRhythm(rhythm);
+    } else {
+      editorPaneRef.current?.insertRhythmRef(rhythm.id);
+    }
+  }, [editorMode]);
 
   // 稳定引用 — 避免破坏 Sidebar/ScorePane 的 memo
   const handleSidebarSelectScore = useCallback((id: string, tmd: string) => {
@@ -154,6 +167,7 @@ export function App() {
       <div className="main-layout">
         {!editorCollapsed && editorMode === 'tmd' && (
           <EditorPane
+            ref={editorPaneRef}
             source={state.tmdSource}
             onChange={state.setTmdSource}
             errors={state.pipelineResult?.errors ?? []}
@@ -174,6 +188,7 @@ export function App() {
               onTmdChange={handleTabTmdChange}
               onSegmentSaved={state.refreshSegmentCache}
               onChordSelectionStart={handleChordSelectionStart}
+              onRhythmSelectionStart={handleRhythmSelectionStart}
               chordToApply={chordToApply}
               onChordApplied={handleChordApplied}
               onChordClick={handleChordClick}
@@ -214,7 +229,7 @@ export function App() {
             highlightChord={highlightChord}
             onHighlightClear={handleHighlightClear}
             onChordPositionChange={editorMode === 'tab' ? handleChordPositionChange : undefined}
-            onRhythmPick={editorMode === 'tab' ? handleRhythmPicked : undefined}
+            onRhythmPick={handleRhythmPicked}
           />
         </div>
       </div>

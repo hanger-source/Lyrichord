@@ -1,6 +1,6 @@
-import { tmdToAlphaTex } from './src/core/pipeline';
+import { tmdToAlphaTex } from '../src/core/pipeline';
 import { readFileSync } from 'fs';
-import { durationToBeats } from './src/core/types';
+import { durationToBeats } from '../src/core/types';
 
 const tmd = readFileSync('./src/data/demo-you-man-wo-man.tmd', 'utf-8');
 const result = tmdToAlphaTex(tmd);

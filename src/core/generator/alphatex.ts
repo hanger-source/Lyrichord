@@ -168,10 +168,27 @@ function generateTexPassthrough(
     const rawTex = (beat as any)._rawTex as string | undefined;
     if (!rawTex) continue;
 
-    if (beat.chordId) {
-      parts.push(`${rawTex} {ch "${beat.chordId}"}`);
+    // 从 _rawTex 中提取已有的 {props} 块，分离出纯 beat 文本和属性
+    const propsMatch = rawTex.match(/^(.*?)\s*\{([^}]*)\}\s*$/);
+    let beatText: string;
+    const existingProps: string[] = [];
+
+    if (propsMatch) {
+      beatText = propsMatch[1].trim();
+      existingProps.push(propsMatch[2].trim());
     } else {
-      parts.push(rawTex);
+      beatText = rawTex;
+    }
+
+    // 添加和弦属性
+    if (beat.chordId) {
+      existingProps.push(`ch "${beat.chordId}"`);
+    }
+
+    if (existingProps.length > 0) {
+      parts.push(`${beatText} {${existingProps.join(' ')}}`);
+    } else {
+      parts.push(beatText);
     }
   }
 

@@ -6,7 +6,7 @@
  * - 上下文感知智能补全（由 src/core/completion/ 提供，可扩展）
  * - 错误/警告详情展示
  */
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useImperativeHandle, forwardRef } from 'react';
 import { FileText, CircleX, TriangleAlert, CircleCheck } from 'lucide-react';
 import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
@@ -30,7 +30,12 @@ interface EditorPaneProps {
 
 const EMPTY_DATA: CompletionData = { chordNames: [], rhythmIds: [], segmentNames: [] };
 
-export function EditorPane({ source, onChange, errors, warnings, completionData, saveMessage }: EditorPaneProps) {
+export interface EditorPaneHandle {
+  /** 在光标所在段落标记行插入/替换节奏型引用 @R1 */
+  insertRhythmRef: (rhythmId: string) => void;
+}
+
+export const EditorPane = forwardRef<EditorPaneHandle, EditorPaneProps>(function EditorPane({ source, onChange, errors, warnings, completionData, saveMessage }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -39,6 +44,34 @@ export function EditorPane({ source, onChange, errors, warnings, completionData,
   dataRef.current = completionData ?? EMPTY_DATA;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+
+  // 暴露给父组件的方法
+  useImperativeHandle(ref, () => ({
+    insertRhythmRef(rhythmId: string) {
+      const view = viewRef.current;
+      if (!view) return;
+      const doc = view.state.doc;
+      const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+
+      // 从光标行往上找最近的段落标记行 [SectionName]
+      for (let ln = cursorLine; ln >= 1; ln--) {
+        const lineText = doc.line(ln).text;
+        const m = lineText.match(/^(\[[^\]]+\])\s*(@\w+)?(.*)$/);
+        if (m) {
+          // 找到段落标记行，替换或插入 @rhythmId
+          const sectionTag = m[1];
+          const rest = (m[3] || '').trim();
+          const newLine = rest ? `${sectionTag} @${rhythmId} ${rest}` : `${sectionTag} @${rhythmId}`;
+          const lineObj = doc.line(ln);
+          view.dispatch({
+            changes: { from: lineObj.from, to: lineObj.to, insert: newLine },
+          });
+          return;
+        }
+      }
+      // 没找到段落标记 → 不操作
+    },
+  }), []);
 
   // 初始化 CodeMirror（只执行一次）
   useEffect(() => {
@@ -170,4 +203,4 @@ export function EditorPane({ source, onChange, errors, warnings, completionData,
       <div ref={containerRef} className="tmd-editor" />
     </div>
   );
-}
+});

@@ -35,6 +35,7 @@ interface TabWorkspaceProps {
   onChordClick?: (chordName: string, positionIndex?: number) => void;
   previewOpen?: boolean;
   onTogglePreview?: () => void;
+  onRhythmSelectionStart?: () => void;
 }
 
 const SEG_KEY = 'tab-workspace-segment';
@@ -42,7 +43,7 @@ const SEG_KEY = 'tab-workspace-segment';
 export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(function TabWorkspace({
   projectId,
   onTmdChange, onSegmentSaved, onChordSelectionStart, chordToApply,
-  onChordApplied, onChordClick, previewOpen, onTogglePreview,
+  onChordApplied, onChordClick, previewOpen, onTogglePreview, onRhythmSelectionStart,
 }, ref) {
   const [segments, setSegments] = useState<SegmentRecord[]>([]);
   const [activeSegId, setActiveSegId] = useState<string | null>(() => {
@@ -70,6 +71,7 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
   const [editorTsLabel, setEditorTsLabel] = useState('4/4');
   const [editorMeasures, setEditorMeasures] = useState<TabMeasure[] | null>(null);
   const [editorKey, setEditorKey] = useState(0);
+  const [fullTmdText, setFullTmdText] = useState<string | null>(null);
 
   // 持久化活跃段落
   useEffect(() => {
@@ -201,8 +203,13 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
     const chordDefs = genChordDefs(allChordRegions);
     const header = genTmdHeader(first.tempo, first.tsLabel, chordDefs);
     const fullTmd = `${header}\n\n${bodies.join('\n\n')}\n`;
-    onTmdChange?.(fullTmd);
-  }, [onTmdChange]);
+    setFullTmdText(fullTmd);
+  }, []);
+
+  // 初始加载段落后构建完整 TMD
+  useEffect(() => {
+    if (segments.length > 0) buildFullTmd(segments);
+  }, [segments, buildFullTmd]);
 
   const doSave = useCallback(async (measures: TabMeasure[], tempo: number, bpm: number, tsLabel: string) => {
     const name = segmentName.trim() || '未命名段落';
@@ -277,12 +284,14 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
           saving={saving}
           saveMsg={saveMsg}
           onTmdChange={onTmdChange}
+          fullTmd={fullTmdText}
           onChordSelectionStart={onChordSelectionStart}
           chordToApply={chordToApply}
           onChordApplied={onChordApplied}
           onChordClick={onChordClick}
           previewOpen={previewOpen}
           onTogglePreview={onTogglePreview}
+          onRhythmSelectionStart={onRhythmSelectionStart}
         />
       </div>
 

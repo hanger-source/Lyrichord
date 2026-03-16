@@ -323,7 +323,7 @@ function scanTexLine(
       continue;
     }
 
-    // 多音 beat: (f.s f.s).dur
+    // 多音 beat: (f.s f.s).dur {props}
     if (text[pos] === '(') {
       const closeIdx = text.indexOf(')', pos + 1);
       if (closeIdx === -1) {
@@ -336,16 +336,34 @@ function scanTexLine(
       while (end < text.length && !(/\s/.test(text[end])) && text[end] !== '[') {
         end++;
       }
+      // 检查后面是否紧跟 {props} 属性块
+      let propEnd = end;
+      while (propEnd < text.length && /\s/.test(text[propEnd])) propEnd++;
+      if (propEnd < text.length && text[propEnd] === '{') {
+        const braceClose = text.indexOf('}', propEnd + 1);
+        if (braceClose !== -1) {
+          end = braceClose + 1;
+        }
+      }
       const beatText = text.slice(pos, end);
       tokens.push(tok('NOTE_EVENT', beatText, lineNum, baseCol + pos));
       pos = end;
       continue;
     }
 
-    // 单音 beat 或 rest: fret.string.dur 或 r.dur
+    // 单音 beat 或 rest: fret.string.dur 或 r.dur，可能带 {props}
     let end = pos;
     while (end < text.length && !/\s/.test(text[end]) && text[end] !== '[') {
       end++;
+    }
+    // 检查后面是否紧跟 {props} 属性块
+    let propEnd = end;
+    while (propEnd < text.length && /\s/.test(text[propEnd])) propEnd++;
+    if (propEnd < text.length && text[propEnd] === '{') {
+      const braceClose = text.indexOf('}', propEnd + 1);
+      if (braceClose !== -1) {
+        end = braceClose + 1;
+      }
     }
     const beatText = text.slice(pos, end);
     if (beatText.length > 0) {

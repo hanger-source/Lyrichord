@@ -18,12 +18,15 @@ interface TabToolbarProps {
   // 撤销
   onUndo: () => void;
   onRedo: () => void;
-  // 拍选中
+  // 拍选中（顶部）
   beatSelCount: number;
   onSplitBeat: () => void;
   onMergeBeats: () => void;
   onToggleRest: () => void;
   onCancelBeatSel: () => void;
+  // 节奏型拍选中（底部）
+  rhythmSelCount: number;
+  onCancelRhythmSel: () => void;
   // 和弦提示
   hasPendingSel: boolean;
   hasChordToApply: boolean;
@@ -49,6 +52,7 @@ export function TabToolbar({
   segmentName, onSegmentNameChange, onSave, saving, saveMsg,
   onUndo, onRedo,
   beatSelCount, onSplitBeat, onMergeBeats, onToggleRest, onCancelBeatSel,
+  rhythmSelCount, onCancelRhythmSel,
   hasPendingSel,
   hasChordToApply, chordToApplyName, onCancelChord,
   tempo, onTempoChange,
@@ -57,6 +61,7 @@ export function TabToolbar({
   previewOpen, onTogglePreview,
 }: TabToolbarProps) {
   const hasBeatSel = beatSelCount > 0;
+  const hasRhythmSel = rhythmSelCount > 0;
 
   return (
     <div className="tab-toolbar-wrap">
@@ -129,8 +134,8 @@ export function TabToolbar({
         )}
       </div>
 
-      {/* 上下文栏 — 和弦/拍选中状态提示 */}
-      {(hasBeatSel || hasPendingSel || hasChordToApply) && (
+      {/* 上下文栏 — 和弦/拍选中/节奏型状态提示 */}
+      {(hasBeatSel || hasRhythmSel || hasPendingSel || hasChordToApply) && (
         <div className="tab-context-bar">
           {hasChordToApply && !hasPendingSel && (
             <>
@@ -154,6 +159,13 @@ export function TabToolbar({
               <button className="tab-ctx-btn" disabled={beatSelCount < 2} onClick={onMergeBeats}>合拍</button>
               <button className="tab-ctx-btn" onClick={onToggleRest}>休止</button>
               <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelBeatSel}>取消</button>
+            </>
+          )}
+          {hasRhythmSel && (
+            <>
+              <span className="tab-context-info">♩ 已选 {rhythmSelCount} 拍</span>
+              <span className="tab-context-hint">点击右侧节奏型应用</span>
+              <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelRhythmSel}>取消</button>
             </>
           )}
         </div>

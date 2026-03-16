@@ -35,6 +35,8 @@ export interface TabBeat {
   weight: number;
   group: number;
   rest?: boolean;
+  /** 扫弦方向: 'bd'=brush down, 'bu'=brush up, 'ds'=dead slap */
+  brush?: 'bd' | 'bu' | 'ds';
 }
 
 export interface TabMeasure {
@@ -128,8 +130,13 @@ function mToTex(m: TabMeasure, measures: TabMeasure[], mi: number): string {
     const chordMark = m.chords.find(c => c.fromBeat === bi);
     const pfx = chordMark ? `[${chordMark.name}]` : '';
     if (beat.rest || notes.length === 0) parts.push(`${pfx}r.${dur}`);
-    else if (notes.length === 1) parts.push(`${pfx}${notes[0].fret}.${notes[0].str}.${dur}`);
-    else parts.push(`${pfx}(${notes.map(n => `${n.fret}.${n.str}`).join(' ')}).${dur}`);
+    else if (notes.length === 1) {
+      parts.push(`${pfx}${notes[0].fret}.${notes[0].str}.${dur}`);
+    }
+    else {
+      const bm = beat.brush ? ` {${beat.brush}}` : '';
+      parts.push(`${pfx}(${notes.map(n => `${n.fret}.${n.str}`).join(' ')}).${dur}${bm}`);
+    }
   }
   return parts.join(' ');
 }
@@ -251,12 +258,14 @@ interface TabEditorProps {
   saving?: boolean;
   saveMsg?: string | null;
   onTmdChange?: (tmd: string) => void;
+  fullTmd?: string | null;
   onChordSelectionStart?: (sel: ChordSelectionPending) => void;
   chordToApply?: { name: string; positionIndex: number } | null;
   onChordApplied?: () => void;
   onChordClick?: (chordName: string, positionIndex?: number) => void;
   previewOpen?: boolean;
   onTogglePreview?: () => void;
+  onRhythmSelectionStart?: () => void;
 }
 
 export interface TabEditorHandle {
@@ -272,8 +281,8 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   initialMeasures, initialTempo = 72, initialBpm = 8, initialTsLabel = '4/4',
   segmentName = '', onSegmentNameChange,
   onSave, saving, saveMsg,
-  onTmdChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
-  previewOpen, onTogglePreview,
+  onTmdChange, fullTmd, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
+  previewOpen, onTogglePreview, onRhythmSelectionStart,
 }: TabEditorProps, ref) {
   const [tempo, setTempo] = useState(initialTempo);
   const [bpm, setBpm] = useState(initialBpm);
@@ -293,6 +302,11 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   const undoStack = useRef<string[]>([]);
   const redoStack = useRef<string[]>([]);
   const lastSnapshot = useRef('');
+
+  // 底部节奏型拖选（提前声明，供 useImperativeHandle 使用）
+  const [rhythmSel, setRhythmSel] = useState<{ mi: number; from: number; to: number } | null>(null);
+  const rhythmSelRef = useRef(rhythmSel);
+  rhythmSelRef.current = rhythmSel;
 
   useImperativeHandle(ref, () => ({
     triggerSave() {
@@ -317,37 +331,59 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
       });
     },
     applyRhythm(rhythm: RhythmPattern) {
+      const sel = rhythmSelRef.current;
+      if (!sel) return;
+
+      const { mi: targetMi, from: selFrom, to: selTo } = sel;
+
       setMeasures(prev => {
-        // push undo snapshot
         const snap = JSON.stringify(prev);
         undoStack.current.push(snap);
         if (undoStack.current.length > 50) undoStack.current.shift();
         redoStack.current = [];
         lastSnapshot.current = snap;
 
-        // 节奏型统一代表一整小节，slot 时值 = 小节总拍数 / slot 数量
-        return prev.map(m => {
-          if (m.chords.length === 0) return m;
+        return prev.map((m, mi) => {
+          if (mi !== targetMi) return m;
           const next = structuredClone(m);
-
-          const totalBeats = next.beats.reduce((s, b) => s + b.weight, 0);
           const slotCount = rhythm.slots.length;
-          const beatsPerSlot = totalBeats / slotCount;
+          const selBeatCount = selTo - selFrom + 1;
 
-          // 计算每个 beat 的绝对拍位（累加 weight）
-          const beatPositions: number[] = [];
-          let pos = 0;
-          for (const b of next.beats) {
-            beatPositions.push(pos);
-            pos += b.weight;
+          // 计算选中范围的总 weight，用 slotCount 个新 beat 替换
+          let totalWeight = 0;
+          for (let i = selFrom; i <= selTo; i++) totalWeight += next.beats[i].weight;
+          const group0 = next.beats[selFrom].group;
+          const perW = totalWeight / slotCount;
+          const newBeats: TabBeat[] = [];
+          for (let i = 0; i < slotCount; i++) {
+            newBeats.push(mkBeat(perW, group0 + Math.floor(i * 4 / slotCount)));
+          }
+          const delta = slotCount - selBeatCount;
+          next.beats.splice(selFrom, selBeatCount, ...newBeats);
+
+          // 更新和弦区间
+          for (const c of next.chords) {
+            if (c.fromBeat >= selFrom + selBeatCount) {
+              c.fromBeat += delta; c.toBeat += delta; continue;
+            }
+            if (c.toBeat > selFrom && c.fromBeat < selFrom + selBeatCount) {
+              if (c.fromBeat >= selFrom) {
+                c.fromBeat = selFrom + Math.round((c.fromBeat - selFrom) * slotCount / selBeatCount);
+              }
+              if (c.toBeat <= selFrom + selBeatCount) {
+                c.toBeat = selFrom + Math.round((c.toBeat - selFrom) * slotCount / selBeatCount);
+              } else {
+                c.toBeat += delta;
+              }
+            }
           }
 
-          // 按小节内绝对位置映射 slot，不按和弦区间重置
-          for (let bi = 0; bi < next.beats.length; bi++) {
-            // 找当前拍位所属的和弦区间
+          // 1:1 映射 slot → beat
+          for (let i = 0; i < slotCount; i++) {
+            const bi = selFrom + i;
+            if (bi >= next.beats.length) break;
             const chord = next.chords.find(c => c.fromBeat <= bi && bi < c.toBeat);
-            if (!chord) continue; // 没有和弦覆盖的拍位不动
-
+            if (!chord) continue;
             const def = resolveChord(chord.name);
             if (!def) continue;
             const posIdx = chord.positionIndex ?? 0;
@@ -355,19 +391,12 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
             const frets: GuitarFrets = cpos
               ? cpos.frets.map(f => f <= 0 ? f : f + cpos.baseFret - 1) as GuitarFrets
               : def.frets;
-
             const beat = next.beats[bi];
-            // slot 索引基于小节内绝对位置
-            const slotIdx = Math.floor(beatPositions[bi] / beatsPerSlot) % slotCount;
-            const slot = rhythm.slots[slotIdx];
+            const slot = rhythm.slots[i];
             const strings = emptyStrings();
-
-            // sustain → 空弦线（延音）
             if (slot.kind === 'strum' && slot.action === 'sustain') {
-              beat.strings = strings;
-              continue;
+              beat.strings = strings; beat.brush = undefined; continue;
             }
-
             const events = expandRhythm(rhythm.type, [slot], frets);
             const ev = events[0];
             if (ev && !ev.isRest && !ev.isSustain) {
@@ -380,11 +409,17 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
                 }
               }
             }
+            // 保存扫弦方向
+            if (ev?.isDeadNote) beat.brush = 'ds';
+            else if (ev?.brushDirection === 'down') beat.brush = 'bd';
+            else if (ev?.brushDirection === 'up') beat.brush = 'bu';
+            else beat.brush = undefined;
             beat.strings = strings;
           }
           return next;
         });
       });
+      setRhythmSel(null);
     },
   }), [onSave]);
 
@@ -426,6 +461,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   const [focusedCell, setFocusedCell] = useState<{ mi: number; bi: number; si: number } | null>(null);
   const [beatSel, setBeatSel] = useState<{ mi: number; from: number; to: number } | null>(null);
   const [beatDrag, setBeatDrag] = useState<{ mi: number; start: number; end: number } | null>(null);
+  const [rhythmDrag, setRhythmDrag] = useState<{ mi: number; start: number; end: number } | null>(null);
   /** 当前选中的和弦区间（mi + fromBeat 唯一标识） */
   const [activeChord, setActiveChord] = useState<{ mi: number; fromBeat: number } | null>(null);
   const [containerW, setContainerW] = useState(900);
@@ -519,6 +555,24 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     setBeatDrag(null);
   }, [beatDrag]);
   useEffect(() => { const up = () => { if (beatDrag) handleBeatDragEnd(); }; window.addEventListener('mouseup', up); return () => window.removeEventListener('mouseup', up); }, [beatDrag, handleBeatDragEnd]);
+
+  // ---- 底部节奏型拖选 ----
+  const handleRhythmDragStart = useCallback((mi: number, bi: number) => { setRhythmDrag({ mi, start: bi, end: bi }); setRhythmSel(null); }, []);
+  const handleRhythmDragEnter = useCallback((mi: number, bi: number) => setRhythmDrag(prev => prev && prev.mi === mi ? { ...prev, end: bi } : prev), []);
+  const handleRhythmDragEnd = useCallback(() => {
+    if (!rhythmDrag) return;
+    setRhythmSel({ mi: rhythmDrag.mi, from: Math.min(rhythmDrag.start, rhythmDrag.end), to: Math.max(rhythmDrag.start, rhythmDrag.end) });
+    setRhythmDrag(null);
+    onRhythmSelectionStart?.();
+  }, [rhythmDrag, onRhythmSelectionStart]);
+  useEffect(() => { const up = () => { if (rhythmDrag) handleRhythmDragEnd(); }; window.addEventListener('mouseup', up); return () => window.removeEventListener('mouseup', up); }, [rhythmDrag, handleRhythmDragEnd]);
+
+  const isRhythmInSel = (mi: number, bi: number): boolean => {
+    if (rhythmDrag && rhythmDrag.mi === mi) { const [a, b] = [Math.min(rhythmDrag.start, rhythmDrag.end), Math.max(rhythmDrag.start, rhythmDrag.end)]; return bi >= a && bi <= b; }
+    if (rhythmSel && rhythmSel.mi === mi) return bi >= rhythmSel.from && bi <= rhythmSel.to;
+    return false;
+  };
+  const rhythmSelCount = rhythmSel ? rhythmSel.to - rhythmSel.from + 1 : 0;
 
   const isBeatInSel = (mi: number, bi: number): boolean => {
     if (beatDrag && beatDrag.mi === mi) { const [a, b] = [Math.min(beatDrag.start, beatDrag.end), Math.max(beatDrag.start, beatDrag.end)]; return bi >= a && bi <= b; }
@@ -648,6 +702,8 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         onMergeBeats={mergeBeats}
         onToggleRest={toggleRestForSel}
         onCancelBeatSel={() => setBeatSel(null)}
+        rhythmSelCount={rhythmSelCount}
+        onCancelRhythmSel={() => setRhythmSel(null)}
         hasPendingSel={!!pendingSel}
         hasChordToApply={!!chordToApply}
         chordToApplyName={chordToApply?.name}
@@ -673,6 +729,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
               <div className="tab-label-beat-row" />
               <div className="tab-label-chord-row" />
               {STRING_NAMES.map((n, si) => <div key={si} className="tab-string-name">{n}</div>)}
+              <div className="tab-label-rhythm-row">♩</div>
             </div>
             {rowMis.map(mi => (
               <TabMeasureView
@@ -682,6 +739,9 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
                 isBeatSelected={bi => isBeatInSel(mi, bi)}
                 onBeatDragStart={bi => handleBeatDragStart(mi, bi)}
                 onBeatDragEnter={bi => handleBeatDragEnter(mi, bi)}
+                isRhythmSelected={bi => isRhythmInSel(mi, bi)}
+                onRhythmDragStart={bi => handleRhythmDragStart(mi, bi)}
+                onRhythmDragEnter={bi => handleRhythmDragEnter(mi, bi)}
                 isDragHL={bi => isDragHL(mi, bi)}
                 isPendingHL={bi => isPendingHL(mi, bi)}
                 onChordMouseDown={bi => handleChordMouseDown(mi, bi)}
@@ -706,12 +766,12 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         <Collapsible.Content className="tab-tmd-body">
           <textarea
             className="tab-tmd-textarea"
-            value={tmdDraft ?? tmdText}
+            value={tmdDraft ?? fullTmd ?? tmdText}
             onChange={e => setTmdDraft(e.target.value)}
             rows={8}
             spellCheck={false}
           />
-          {tmdDraft !== null && tmdDraft !== tmdText && (
+          {tmdDraft !== null && tmdDraft !== (fullTmd ?? tmdText) && (
             <div className="tab-tmd-actions">
               <button className="tab-action-btn tab-save-btn" onClick={handleImportTmd}>应用</button>
               <button className="tab-action-btn" onClick={() => setTmdDraft(null)}>取消</button>
