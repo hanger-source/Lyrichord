@@ -20,6 +20,7 @@ interface TabToolbarProps {
   onRedo: () => void;
   // 拍选中（顶部）
   beatSelCount: number;
+  beatSelMi: number | null;
   onSplitBeat: () => void;
   onMergeBeats: () => void;
   onToggleRest: () => void;
@@ -41,8 +42,6 @@ interface TabToolbarProps {
   timeSigs: [string, number][];
   // 小节
   measureCount: number;
-  onAddMeasure: () => void;
-  onRemoveMeasure: () => void;
   // 预览
   previewOpen?: boolean;
   onTogglePreview?: () => void;
@@ -51,13 +50,13 @@ interface TabToolbarProps {
 export function TabToolbar({
   segmentName, onSegmentNameChange, onSave, saving, saveMsg,
   onUndo, onRedo,
-  beatSelCount, onSplitBeat, onMergeBeats, onToggleRest, onCancelBeatSel,
+  beatSelCount, beatSelMi, onSplitBeat, onMergeBeats, onToggleRest, onCancelBeatSel,
   rhythmSelCount, onCancelRhythmSel,
   hasPendingSel,
   hasChordToApply, chordToApplyName, onCancelChord,
   tempo, onTempoChange,
   tsLabel, onTsChange, timeSigs,
-  measureCount, onAddMeasure, onRemoveMeasure,
+  measureCount,
   previewOpen, onTogglePreview,
 }: TabToolbarProps) {
   const hasBeatSel = beatSelCount > 0;
@@ -123,8 +122,6 @@ export function TabToolbar({
             </Select.Portal>
           </Select.Root>
           <span className="tab-toolbar-divider">|</span>
-          <button className="tab-action-btn" onClick={onAddMeasure}>+ 小节</button>
-          <button className="tab-action-btn" onClick={onRemoveMeasure} disabled={measureCount <= 1}>− 小节</button>
           <span className="tab-toolbar-count">{measureCount} 小节</span>
         </div>
         {onTogglePreview && (
@@ -134,42 +131,44 @@ export function TabToolbar({
         )}
       </div>
 
-      {/* 上下文栏 — 和弦/拍选中/节奏型状态提示 */}
-      {(hasBeatSel || hasRhythmSel || hasPendingSel || hasChordToApply) && (
-        <div className="tab-context-bar">
-          {hasChordToApply && !hasPendingSel && (
-            <>
-              <span className="tab-context-hint">已选 <strong>{chordToApplyName}</strong>，在和弦行拖选拍位以填入</span>
-              <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelChord}>取消 (Esc)</button>
-            </>
-          )}
-          {hasPendingSel && !hasChordToApply && (
-            <>
-              <span className="tab-context-hint">已选拍位，点击左侧和弦库填入</span>
-              <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelChord}>取消 (Esc)</button>
-            </>
-          )}
-          {hasPendingSel && hasChordToApply && (
+      {/* 上下文栏 — 栈式优先级，只显示最高优先级状态 */}
+      {(() => {
+        // 优先级：和弦填入中 > 拍位待填 > 和弦已选待拖 > 节奏型选中 > 拍选中
+        if (hasPendingSel && hasChordToApply) return (
+          <div className="tab-context-bar">
             <span className="tab-context-hint">正在填入 <strong>{chordToApplyName}</strong>...</span>
-          )}
-          {hasBeatSel && (
-            <>
-              <span className="tab-context-info">已选 {beatSelCount} 拍</span>
-              <button className="tab-ctx-btn" onClick={onSplitBeat}>拆拍</button>
-              <button className="tab-ctx-btn" disabled={beatSelCount < 2} onClick={onMergeBeats}>合拍</button>
-              <button className="tab-ctx-btn" onClick={onToggleRest}>休止</button>
-              <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelBeatSel}>取消</button>
-            </>
-          )}
-          {hasRhythmSel && (
-            <>
-              <span className="tab-context-info">♩ 已选 {rhythmSelCount} 拍</span>
-              <span className="tab-context-hint">点击右侧节奏型应用</span>
-              <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelRhythmSel}>取消</button>
-            </>
-          )}
-        </div>
-      )}
+          </div>
+        );
+        if (hasPendingSel && !hasChordToApply) return (
+          <div className="tab-context-bar">
+            <span className="tab-context-hint">已选拍位，点击左侧和弦库填入</span>
+            <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelChord}>取消 (Esc)</button>
+          </div>
+        );
+        if (hasChordToApply && !hasPendingSel) return (
+          <div className="tab-context-bar">
+            <span className="tab-context-hint">已选 <strong>{chordToApplyName}</strong>，在和弦行拖选拍位以填入</span>
+            <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelChord}>取消 (Esc)</button>
+          </div>
+        );
+        if (hasRhythmSel) return (
+          <div className="tab-context-bar">
+            <span className="tab-context-info">♩ 已选 {rhythmSelCount} 拍</span>
+            <span className="tab-context-hint">点击右侧节奏型应用</span>
+            <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelRhythmSel}>取消</button>
+          </div>
+        );
+        if (hasBeatSel) return (
+          <div className="tab-context-bar">
+            <span className="tab-context-info">已选 {beatSelCount} 拍 (小节 {(beatSelMi ?? 0) + 1})</span>
+            <button className="tab-ctx-btn" onClick={onSplitBeat}>拆拍</button>
+            <button className="tab-ctx-btn" disabled={beatSelCount < 2} onClick={onMergeBeats}>合拍</button>
+            <button className="tab-ctx-btn" onClick={onToggleRest}>休止</button>
+            <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelBeatSel}>取消</button>
+          </div>
+        );
+        return <div className="tab-context-bar--placeholder" />;
+      })()}
     </div>
   );
 }

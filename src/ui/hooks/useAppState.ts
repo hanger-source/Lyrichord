@@ -35,9 +35,9 @@ function loadSavedProject(): { id: string | null; title: string } {
   return { id: null, title: '' };
 }
 
-export function useAppState(initialTmd: string) {
+export function useAppState() {
   const savedProject = useRef(loadSavedProject());
-  const [tmdSource, setTmdSourceRaw] = useState(initialTmd);
+  const [tmdSource, setTmdSourceRaw] = useState('');
   const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>('stopped');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => {
@@ -162,7 +162,7 @@ export function useAppState(initialTmd: string) {
 
   // 首次渲染
   useEffect(() => {
-    runPipeline(initialTmd);
+    runPipeline('');
   }, []);
 
   const setTmdSource = useCallback((source: string) => {
@@ -274,10 +274,10 @@ export function useAppState(initialTmd: string) {
         console.error('加载项目版本失败:', e);
       }
     }
-    // 无项目或无版本 → 回到 demo
-    setTmdSourceRaw(initialTmd);
-    runPipeline(initialTmd);
-  }, [initialTmd, runPipeline]);
+    // 无项目或无版本 → 清空
+    setTmdSourceRaw('');
+    runPipeline('');
+  }, [runPipeline]);
 
   // 新建项目
   const createProject = useCallback(async (title: string) => {

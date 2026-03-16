@@ -18,10 +18,9 @@ import type { RhythmPattern } from '../core/types';
 import { applyTheme, lightColors, darkColors, layout } from './theme';
 import type { ColorTokens } from './theme';
 import { tmdToAlphaTex, type PipelineResult } from '../core/pipeline';
-import demoTmd from '../data/demo-you-man-wo-man.tmd?raw';
 
 export function App() {
-  const state = useAppState(demoTmd);
+  const state = useAppState();
   const [editorCollapsed, setEditorCollapsed] = useState(false);
   const [editorMode, setEditorMode] = useState<'tmd' | 'tab'>(() => {
     try {
@@ -39,7 +38,10 @@ export function App() {
   const editorPaneRef = useRef<EditorPaneHandle>(null);
   const [activeColors, setActiveColors] = useState<ColorTokens>(lightColors);
   // TAB 模式曲谱预览开关
-  const [tabPreviewOpen, setTabPreviewOpen] = useState(true);
+  const [tabPreviewOpen, setTabPreviewOpen] = useState(() => {
+    const saved = localStorage.getItem('tabPreviewOpen');
+    return saved === null ? true : saved === '1';
+  });
   // TAB ↔ 和弦库联动
   const [chordToApply, setChordToApply] = useState<{ name: string; positionIndex: number } | null>(null);
   const [highlightChord, setHighlightChord] = useState<{ name: string; positionIndex?: number } | null>(null);
@@ -193,7 +195,7 @@ export function App() {
               onChordApplied={handleChordApplied}
               onChordClick={handleChordClick}
               previewOpen={tabPreviewOpen}
-              onTogglePreview={() => setTabPreviewOpen(p => !p)}
+              onTogglePreview={() => setTabPreviewOpen(p => { const next = !p; localStorage.setItem('tabPreviewOpen', next ? '1' : '0'); return next; })}
             />
           </div>
         )}

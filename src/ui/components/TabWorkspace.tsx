@@ -284,7 +284,6 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
           saving={saving}
           saveMsg={saveMsg}
           onTmdChange={onTmdChange}
-          fullTmd={fullTmdText}
           onChordSelectionStart={onChordSelectionStart}
           chordToApply={chordToApply}
           onChordApplied={onChordApplied}
