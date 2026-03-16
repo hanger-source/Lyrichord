@@ -3,6 +3,9 @@
  *
  * 职责：六线谱网格编辑，段落管理由 TabWorkspace 处理。
  * 子组件：TabToolbar（工具栏）、TabMeasureView（小节渲染）
+ *
+ * 类型/常量/工具函数 → tab/tab-types.ts
+ * TMD 生成 → tab/tab-tmd-gen.ts
  */
 import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, forwardRef, useImperativeHandle } from 'react';
 import * as Collapsible from '@radix-ui/react-collapsible';
@@ -11,241 +14,19 @@ import { parseTmdToMeasures } from '../../core/tmd-to-measures';
 import { expandRhythm } from '../../core/rhythm/expander';
 import type { RhythmPattern, GuitarFrets } from '../../core/types';
 import { TabToolbar } from './tab/TabToolbar';
-import { TabMeasureView, measureWidth, beatWidth } from './tab/TabMeasureView';
+import { TabMeasureView, measureWidth } from './tab/TabMeasureView';
 
-// ---- 数据模型 ----
+// 从拆分模块重新导出类型（保持外部 import 兼容）
+export type { StringMark, Strings6, ChordRegion, TabBeat, TabMeasure, ChordSelectionPending } from './tab/tab-types';
+export { mkMeasure, emptyStrings } from './tab/tab-types';
+export { genSectionBody, genChordDefs, genTmdHeader } from './tab/tab-tmd-gen';
 
-export type StringMark =
-  | { type: 'none' }
-  | { type: 'chord' }
-  | { type: 'custom'; fret: number };
-
-export type Strings6 = [StringMark, StringMark, StringMark, StringMark, StringMark, StringMark];
-
-export interface ChordRegion {
-  fromBeat: number;
-  toBeat: number;
-  name: string;
-  /** 指法变体索引（对应 ChordDefinition.positions[idx]） */
-  positionIndex?: number;
-}
-
-export interface TabBeat {
-  strings: Strings6;
-  weight: number;
-  group: number;
-  rest?: boolean;
-  /** 扫弦方向: 'ad'=arpeggio down, 'au'=arpeggio up, 'ds'=dead slap */
-  brush?: 'ad' | 'au' | 'ds';
-}
-
-export interface TabMeasure {
-  beats: TabBeat[];
-  chords: ChordRegion[];
-}
-
-export interface ChordSelectionPending {
-  measureIdx: number;
-  fromBeat: number;
-  toBeat: number;
-}
-
-// ---- 常量 ----
-const STRING_COUNT = 6;
-const STRING_NAMES = ['e', 'B', 'G', 'D', 'A', 'E'];
-const LABEL_W = 28;
-const TIME_SIGS: [string, number][] = [['3/4', 6], ['4/4', 8], ['6/8', 6]];
-
-// ---- 工具函数 ----
-
-function emptyStrings(): Strings6 {
-  return [
-    { type: 'none' }, { type: 'none' }, { type: 'none' },
-    { type: 'none' }, { type: 'none' }, { type: 'none' },
-  ];
-}
-
-function mkBeat(weight: number, group: number): TabBeat {
-  return { strings: emptyStrings(), weight, group };
-}
-
-export function mkMeasure(bpm: number): TabMeasure {
-  const beats: TabBeat[] = [];
-  for (let i = 0; i < bpm; i++) beats.push(mkBeat(1, Math.floor(i / 2)));
-  return { beats, chords: [] };
-}
-
-function chordAt(measures: TabMeasure[], mi: number, bi: number): ChordRegion | null {
-  const mc = measures[mi].chords;
-  for (let i = mc.length - 1; i >= 0; i--) {
-    if (mc[i].fromBeat <= bi && bi < mc[i].toBeat) return mc[i];
-  }
-  for (let m = mi - 1; m >= 0; m--) {
-    const prev = measures[m].chords;
-    if (prev.length > 0) return prev[prev.length - 1];
-  }
-  return null;
-}
-
-function chordFretForString(name: string, si: number, positionIndex?: number): number {
-  const def = resolveChord(name);
-  if (!def) return 0;
-  // positions 里的 frets 是相对品位，需要转为绝对品位
-  // def.frets 已经是绝对品位（positions[0] 转换过的）
-  const idx = positionIndex ?? 0;
-  const pos = def.positions?.[idx];
-  if (pos) {
-    const relFret = pos.frets[5 - si];
-    if (relFret <= 0) return relFret; // 0=空弦, -1=不弹
-    return relFret + pos.baseFret - 1; // 转绝对品位
-  }
-  return def.frets[5 - si];
-}
-
-function hasContent(m: TabMeasure): boolean {
-  if (m.chords.length > 0) return true;
-  return m.beats.some(b => b.rest || b.strings.some(s => s.type !== 'none'));
-}
-
-function weightToDur(w: number): number {
-  if (w >= 2) return 4; if (w >= 1) return 8; if (w >= 0.5) return 16; return 32;
-}
-
-function mToTex(m: TabMeasure, measures: TabMeasure[], mi: number): string {
-  const parts: string[] = [];
-  for (let bi = 0; bi < m.beats.length; bi++) {
-    const beat = m.beats[bi];
-    const region = chordAt(measures, mi, bi);
-    const dur = weightToDur(beat.weight);
-    const notes: { fret: number; str: number }[] = [];
-    for (let si = 0; si < STRING_COUNT; si++) {
-      const mk = beat.strings[si];
-      if (mk.type === 'chord' && region) {
-        const f = chordFretForString(region.name, si, region.positionIndex);
-        if (f >= 0) notes.push({ fret: f, str: si + 1 });
-      } else if (mk.type === 'custom') {
-        notes.push({ fret: mk.fret, str: si + 1 });
-      }
-    }
-    const chordMark = m.chords.find(c => c.fromBeat === bi);
-    const pfx = chordMark ? `[${chordMark.name}]` : '';
-    if (beat.rest || notes.length === 0) parts.push(`${pfx}r.${dur}`);
-    else if (notes.length === 1) {
-      parts.push(`${pfx}${notes[0].fret}.${notes[0].str}.${dur}`);
-    }
-    else {
-      const bm = beat.brush
-        ? ` {${beat.brush}${beat.brush !== 'ds' ? ' 60' : ''}}`
-        : '';
-      parts.push(`${pfx}(${notes.map(n => `${n.fret}.${n.str}`).join(' ')}).${dur}${bm}`);
-    }
-  }
-  return parts.join(' ');
-}
-
-function mToChordLine(m: TabMeasure): string {
-  const groups = new Map<number, string | null>();
-  for (const b of m.beats) { if (!groups.has(b.group)) groups.set(b.group, null); }
-  for (const c of m.chords) { if (c.fromBeat < m.beats.length) groups.set(m.beats[c.fromBeat].group, c.name); }
-  return `| ${[...groups.values()].map(v => v ?? '.').join(' ')} |`;
-}
-
-/**
- * 生成单个段落的 TMD body（不含 header）
- * 返回 [SectionName] + 小节内容，以及用到的和弦名集合
- */
-export function genSectionBody(
-  measures: TabMeasure[],
-  sectionName?: string,
-): { body: string; usedChords: ChordRegion[] } {
-  const section = sectionName?.trim() || 'Untitled';
-  const usedChords: ChordRegion[] = [];
-  const seen = new Set<string>();
-  for (const m of measures) {
-    for (const c of m.chords) {
-      if (!seen.has(c.name)) {
-        seen.add(c.name);
-        usedChords.push(c);
-      }
-    }
-  }
-
-  const lines = measures
-    .map((m, i) => hasContent(m) ? `${mToChordLine(m)}\ntex: ${mToTex(m, measures, i)}` : null)
-    .filter(Boolean).join('\n\n');
-
-  if (!lines) return { body: '', usedChords };
-  return { body: `[${section}]\n\n${lines}`, usedChords };
-}
-
-/**
- * 生成和弦 define 行
- */
-/**
- * 从使用的和弦区间生成 TMD define 行
- * 每个和弦取实际使用的 positionIndex 对应的指法
- */
-export function genChordDefs(chordRegions: Iterable<ChordRegion>): string[] {
-  const defs: string[] = [];
-  const seen = new Set<string>();
-  for (const region of chordRegions) {
-    if (seen.has(region.name)) continue;
-    seen.add(region.name);
-    const def = resolveChord(region.name);
-    if (!def) continue;
-    const posIdx = region.positionIndex ?? 0;
-    const pos = def.positions?.[posIdx] ?? def.positions?.[0];
-    const frets = pos
-      ? pos.frets.map(f => {
-          if (f < 0) return 'x';
-          if (f === 0) return '0';
-          return String(f + pos.baseFret - 1); // 转绝对品位
-        }).join(' ')
-      : def.frets.map(f => f < 0 ? 'x' : String(f)).join(' ');
-    defs.push(`define [${region.name}]: { frets: "${frets}" }`);
-  }
-  return defs;
-}
-
-/**
- * 生成 TMD header
- */
-export function genTmdHeader(tempo: number, tsLabel: string, chordDefs: string[]): string {
-  return [
-    '---',
-    `tempo: ${tempo}`,
-    `time_signature: ${tsLabel}`,
-    ...(chordDefs.length > 0 ? ['', ...chordDefs] : []),
-    '---',
-  ].join('\n');
-}
-
-/**
- * 生成单段落完整 TMD（header + [Section] + body）
- * 用于单段落预览
- */
-function genTmd(measures: TabMeasure[], opts?: { bpm?: number; tsLabel?: string; sectionName?: string }): string {
-  const tempo = opts?.bpm ?? 72;
-  const ts = opts?.tsLabel ?? '4/4';
-
-  const { body, usedChords } = genSectionBody(measures, opts?.sectionName);
-  if (!body) return '';
-
-  const chordDefs = genChordDefs(usedChords);
-  const header = genTmdHeader(tempo, ts, chordDefs);
-  return `${header}\n\n${body}\n`;
-}
-
-function splitRows(measures: TabMeasure[], cw: number): number[][] {
-  const rows: number[][] = []; let row: number[] = []; let rowW = LABEL_W;
-  for (let i = 0; i < measures.length; i++) {
-    const mw = measureWidth(measures[i]);
-    if (row.length > 0 && rowW + mw > cw) { rows.push(row); row = [i]; rowW = LABEL_W + mw; }
-    else { row.push(i); rowW += mw; }
-  }
-  if (row.length > 0) rows.push(row);
-  return rows;
-}
+import {
+  STRING_COUNT, STRING_NAMES, LABEL_W, TIME_SIGS,
+  emptyStrings, mkBeat, mkMeasure,
+} from './tab/tab-types';
+import type { TabMeasure, ChordSelectionPending } from './tab/tab-types';
+import { chordAt, chordFretForString, genTmd, splitRows } from './tab/tab-tmd-gen';
 
 // ---- 组件 Props ----
 
@@ -271,13 +52,11 @@ interface TabEditorProps {
 }
 
 export interface TabEditorHandle {
-  /** 外部触发保存（如 Ctrl+S） */
   triggerSave: () => void;
-  /** 更新所有同名和弦的 positionIndex */
   updateChordPosition: (chordName: string, positionIndex: number) => void;
-  /** 应用节奏型到所有有和弦的小节 */
   applyRhythm: (rhythm: RhythmPattern) => void;
 }
+
 
 export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function TabEditor({
   initialMeasures, initialTempo = 72, initialBpm = 8, initialTsLabel = '4/4',
@@ -293,19 +72,18 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     initialMeasures ?? Array.from({ length: 4 }, () => mkMeasure(initialBpm))
   );
 
-  // 暴露 triggerSave 给外部（Ctrl+S）
   const measuresRef = useRef(measures);
   measuresRef.current = measures;
   const tempoRef = useRef(initialTempo);
   const bpmRef = useRef(initialBpm);
   const tsLabelRef = useRef(initialTsLabel);
 
-  // ---- Undo / Redo (refs 提前声明，供 useImperativeHandle 使用) ----
+  // ---- Undo / Redo ----
   const undoStack = useRef<string[]>([]);
   const redoStack = useRef<string[]>([]);
   const lastSnapshot = useRef('');
 
-  // 底部节奏型拖选（提前声明，供 useImperativeHandle 使用）
+  // 底部节奏型拖选
   const [rhythmSel, setRhythmSel] = useState<{ mi: number; from: number; to: number } | null>(null);
   const rhythmSelRef = useRef(rhythmSel);
   rhythmSelRef.current = rhythmSel;
@@ -351,19 +129,16 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
           const slotCount = rhythm.slots.length;
           const selBeatCount = selTo - selFrom + 1;
 
-          // 计算选中范围的总 weight，用 slotCount 个新 beat 替换
           let totalWeight = 0;
           for (let i = selFrom; i <= selTo; i++) totalWeight += next.beats[i].weight;
           const group0 = next.beats[selFrom].group;
           const perW = totalWeight / slotCount;
-          const newBeats: TabBeat[] = [];
-          for (let i = 0; i < slotCount; i++) {
-            newBeats.push(mkBeat(perW, group0 + Math.floor(i * 4 / slotCount)));
-          }
+          const newBeats = Array.from({ length: slotCount }, (_, i) =>
+            mkBeat(perW, group0 + Math.floor(i * 4 / slotCount))
+          );
           const delta = slotCount - selBeatCount;
           next.beats.splice(selFrom, selBeatCount, ...newBeats);
 
-          // 更新和弦区间
           for (const c of next.chords) {
             if (c.fromBeat >= selFrom + selBeatCount) {
               c.fromBeat += delta; c.toBeat += delta; continue;
@@ -380,7 +155,6 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
             }
           }
 
-          // 1:1 映射 slot → beat
           for (let i = 0; i < slotCount; i++) {
             const bi = selFrom + i;
             if (bi >= next.beats.length) break;
@@ -411,7 +185,6 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
                 }
               }
             }
-            // 保存扫弦方向
             if (ev?.isDeadNote) beat.brush = 'ds';
             else if (ev?.brushDirection === 'down') beat.brush = 'ad';
             else if (ev?.brushDirection === 'up') beat.brush = 'au';
@@ -464,7 +237,6 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   const [beatSel, setBeatSel] = useState<{ mi: number; from: number; to: number } | null>(null);
   const [beatDrag, setBeatDrag] = useState<{ mi: number; start: number; end: number } | null>(null);
   const [rhythmDrag, setRhythmDrag] = useState<{ mi: number; start: number; end: number } | null>(null);
-  /** 当前选中的和弦区间（mi + fromBeat 唯一标识） */
   const [activeChord, setActiveChord] = useState<{ mi: number; fromBeat: number } | null>(null);
   const [containerW, setContainerW] = useState(900);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -476,7 +248,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     const ro = new ResizeObserver(entries => {
       for (const e of entries) {
         const w = Math.round(e.contentRect.width);
-        if (Math.abs(w - containerWRef.current) < 4) return; // 忽略微小变化
+        if (Math.abs(w - containerWRef.current) < 4) return;
         containerWRef.current = w;
         cancelAnimationFrame(rafRef.current);
         rafRef.current = requestAnimationFrame(() => setContainerW(w));
