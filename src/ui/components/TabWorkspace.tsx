@@ -14,12 +14,15 @@ import {
   saveSegment, deleteSegment,
   type SegmentRecord,
 } from '../../db/segment-repo';
+import type { RhythmPattern } from '../../core/types';
 
 export interface TabWorkspaceHandle {
   /** 外部触发保存（如 Ctrl+S） */
   save: () => void;
   /** 更新所有同名和弦的 positionIndex */
   updateChordPosition: (chordName: string, positionIndex: number) => void;
+  /** 应用节奏型到当前段落 */
+  applyRhythm: (rhythm: RhythmPattern) => void;
 }
 
 interface TabWorkspaceProps {
@@ -56,6 +59,9 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
     save() { tabEditorRef.current?.triggerSave(); },
     updateChordPosition(chordName: string, positionIndex: number) {
       tabEditorRef.current?.updateChordPosition(chordName, positionIndex);
+    },
+    applyRhythm(rhythm: RhythmPattern) {
+      tabEditorRef.current?.applyRhythm(rhythm);
     },
   }), []);
 

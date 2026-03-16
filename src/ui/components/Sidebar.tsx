@@ -11,10 +11,12 @@ import {
   ChevronDown, ChevronRight, Search,
 } from 'lucide-react';
 import type { SidebarTab } from '../hooks/useAppState';
-import type { Song, ChordDefinition, RhythmPattern, RhythmSlot } from '../../core/types';import { renderChordDiagram } from '../chord-diagram';
+import type { Song, ChordDefinition, RhythmPattern, RhythmSlot } from '../../core/types';
+import { renderChordDiagram } from '../chord-diagram';
 import { resolveChord } from '../../core/chord/resolver';
 import { getAllChordDefs, searchChordsInDB } from '../../core/chord/database';
 import { getChordsBySource } from '../../db/chord-repo';
+import { getAllRhythms } from '../../db/rhythm-repo';
 import {
   getAllScores, getScoreWithVersions, getLatestVersion,
   type ScoreRecord, type ScoreWithVersions,
@@ -36,9 +38,11 @@ interface SidebarProps {
   onHighlightClear?: () => void;
   /** 用户在 Sidebar 切换指法变体 → 同步更新 TAB 里同名和弦的 positionIndex */
   onChordPositionChange?: (chordName: string, positionIndex: number) => void;
+  /** TAB 模式下，点击节奏型卡片 → 应用到段落 */
+  onRhythmPick?: (rhythm: RhythmPattern) => void;
 }
 
-export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear, onChordPositionChange }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear, onChordPositionChange, onRhythmPick }: SidebarProps) {
   return (
     <Tooltip.Provider delayDuration={300}>
       <aside className="sidebar">
@@ -48,7 +52,7 @@ export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSele
         <div style={{ display: tab === 'rhythms' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
           <ScrollArea.Root className="sidebar-scroll-root">
             <ScrollArea.Viewport className="sidebar-scroll-viewport">
-              <RhythmPanel song={song} />
+              <RhythmPanel song={song} onRhythmPick={onRhythmPick} />
             </ScrollArea.Viewport>
             <ScrollArea.Scrollbar className="sidebar-scrollbar" orientation="vertical">
               <ScrollArea.Thumb className="sidebar-scrollbar-thumb" />
@@ -385,8 +389,24 @@ function ChordCardDef({ chord, onPick, highlight, highlightPositionIndex, onHigh
 //  节奏型面板
 // ============================================================
 
-const RhythmPanel = memo(function RhythmPanel({ song }: { song: Song | null }) {
-  const rhythms = song ? Array.from(song.rhythmLibrary.values()) : [];
+const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick }: { song: Song | null; onRhythmPick?: (rhythm: RhythmPattern) => void }) {
+  const [dbRhythms, setDbRhythms] = useState<RhythmPattern[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // 从 DB 加载节奏型
+  useEffect(() => {
+    getAllRhythms().then(setDbRhythms).catch(console.error);
+  }, [reloadKey, song]);
+
+  // 合并 DB 和 song 里的节奏型，song 优先（最新解析的 TMD）
+  const rhythms = (() => {
+    const map = new Map<string, RhythmPattern>();
+    for (const r of dbRhythms) map.set(r.id, r);
+    if (song) {
+      for (const [id, r] of song.rhythmLibrary) map.set(id, r);
+    }
+    return Array.from(map.values());
+  })();
 
   return (
     <div className="sidebar-panel">
@@ -399,7 +419,7 @@ const RhythmPanel = memo(function RhythmPanel({ song }: { song: Song | null }) {
       ) : (
         <div className="rhythm-list">
           {rhythms.map(r => (
-            <RhythmCard key={r.id} rhythm={r} />
+            <RhythmCard key={r.id} rhythm={r} onPick={onRhythmPick} />
           ))}
         </div>
       )}
@@ -407,12 +427,13 @@ const RhythmPanel = memo(function RhythmPanel({ song }: { song: Song | null }) {
   );
 });
 
-function RhythmCard({ rhythm }: { rhythm: RhythmPattern }) {
+function RhythmCard({ rhythm, onPick }: { rhythm: RhythmPattern; onPick?: (rhythm: RhythmPattern) => void }) {
   const [expanded, setExpanded] = useState(false);
   const slotsPerBeat = rhythm.slots.length >= 8 ? Math.ceil(rhythm.slots.length / 4) : Math.ceil(rhythm.slots.length / 2);
 
   return (
-    <div className="rhythm-card" onClick={() => setExpanded(!expanded)}>
+    <div className={`rhythm-card ${onPick ? 'rhythm-card--pickable' : ''}`}
+      onClick={() => onPick ? onPick(rhythm) : setExpanded(!expanded)}>
       <div className="rhythm-header">
         <span className="rhythm-id">@{rhythm.id}</span>
         <div className="rhythm-header-right">

@@ -140,7 +140,7 @@ export function TabToolbar({
           )}
           {hasPendingSel && !hasChordToApply && (
             <>
-              <span className="tab-context-hint">← 从和弦库选择和弦填入</span>
+              <span className="tab-context-hint">已选拍位，点击左侧和弦库填入</span>
               <button className="tab-ctx-btn tab-ctx-btn--cancel" onClick={onCancelChord}>取消 (Esc)</button>
             </>
           )}

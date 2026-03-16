@@ -61,6 +61,9 @@ export function generate(song: Song): AlphaTexOutput {
     // 检查是否是 tex 直通模式
     const isTexMode = bar.beats.some(b => (b as any)._rawTex);
 
+    // Section 标记
+    const sectionTex = mb.section ? `\\section "${mb.section.name}" ` : '';
+
     let measureTex: string;
     let measureLyrics = '';
     let measureLyrics2 = '';
@@ -96,12 +99,7 @@ export function generate(song: Song): AlphaTexOutput {
       }
     }
 
-    // Section 标记
-    if (mb.section) {
-      barLines.push(`\\section "${mb.section.name}"`);
-    }
-
-    barLines.push(measureTex + ' |');
+    barLines.push(sectionTex + measureTex + ' |');
 
     measures.push({
       notes: measureTex,
@@ -171,7 +169,6 @@ function generateTexPassthrough(
     if (!rawTex) continue;
 
     if (beat.chordId) {
-      // 在 beat 前加和弦标记
       parts.push(`${rawTex} {ch "${beat.chordId}"}`);
     } else {
       parts.push(rawTex);
@@ -256,8 +253,12 @@ function resolveFrets(chordId: string, song: Song): GuitarFrets | null {
 // 节奏型展开生成
 // ============================================================
 
-function slotBeats(rhythm: RhythmPattern): number {
-  return rhythm.type === 'pluck' ? 0.5 : 0.25;
+/**
+ * 每个 slot 占多少拍。
+ * 节奏型统一代表一整小节，slot 时值 = 小节总拍数 / slot 数量。
+ */
+function slotBeats(rhythm: RhythmPattern, beatsPerMeasure: number): number {
+  return beatsPerMeasure / rhythm.slots.length;
 }
 
 function generateMeasure(
@@ -269,9 +270,9 @@ function generateMeasure(
     return generateFallbackMeasure(timeline, beatsPerMeasure);
   }
 
-  const bps = slotBeats(rhythm);
+  const bps = slotBeats(rhythm, beatsPerMeasure);
   const slotCount = rhythm.slots.length;
-  const totalSlots = Math.round(beatsPerMeasure / bps);
+  const totalSlots = slotCount; // 一小节 = 一轮完整节奏型
 
   interface SlotInfo {
     beatPos: number;
