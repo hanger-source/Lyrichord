@@ -354,6 +354,14 @@ export interface Beat {
    * 无 chordId → 延续上一个和弦
    */
   chordId?: string;
+  /**
+   * 和弦级别节奏型引用
+   *
+   * 来自 TMD 小节行的 C@R1 格式。
+   * 有 rhythmId → 该和弦区间用节奏型展开
+   * 无 rhythmId → 用 tex 行精确 beat 或 fallback
+   */
+  rhythmId?: string;
   /** 歌词片段 */
   lyrics?: string;
   /** 演奏控制 */

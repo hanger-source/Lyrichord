@@ -26,12 +26,6 @@ export function SegmentNav({
         <span className="seg-nav-count">{segments.length}</span>
       </div>
       <div className="seg-nav-list">
-        {isNewSegment && (
-          <div className="seg-nav-item seg-nav-item--active seg-nav-item--new">
-            <span className="seg-nav-item-name">新段落</span>
-            <span className="seg-nav-item-meta">未保存</span>
-          </div>
-        )}
         {segments.length === 0 && !isNewSegment ? (
           <div className="seg-nav-empty">点击下方新建段落</div>
         ) : segments.map(seg => (
@@ -51,6 +45,12 @@ export function SegmentNav({
             </button>
           </div>
         ))}
+        {isNewSegment && (
+          <div className="seg-nav-item seg-nav-item--active seg-nav-item--new">
+            <span className="seg-nav-item-name">新段落</span>
+            <span className="seg-nav-item-meta">未保存</span>
+          </div>
+        )}
       </div>
       <button className="seg-nav-add-btn" onClick={onNewSegment}>
         <Plus size={14} /> 新建段落

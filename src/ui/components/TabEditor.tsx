@@ -9,17 +9,15 @@
  */
 import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, forwardRef, useImperativeHandle } from 'react';
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { resolveChord } from '../../core/chord/resolver';
+import type { RhythmPattern } from '../../core/types';
 import { parseTmdToMeasures } from '../../core/tmd-to-measures';
-import { expandRhythm } from '../../core/rhythm/expander';
-import type { RhythmPattern, GuitarFrets } from '../../core/types';
 import { TabToolbar } from './tab/TabToolbar';
-import { TabMeasureView, measureWidth } from './tab/TabMeasureView';
+import { TabMeasureView } from './tab/TabMeasureView';
 
 // 从拆分模块重新导出类型（保持外部 import 兼容）
 export type { StringMark, Strings6, ChordRegion, TabBeat, TabMeasure, ChordSelectionPending } from './tab/tab-types';
 export { mkMeasure, emptyStrings } from './tab/tab-types';
-export { genSectionBody, genChordDefs, genTmdHeader } from './tab/tab-tmd-gen';
+export { genSectionBody, genChordDefs, genTmdHeader, genRhythmDefs } from './tab/tab-tmd-gen';
 
 import {
   STRING_NAMES, TIME_SIGS,
@@ -27,6 +25,9 @@ import {
 } from './tab/tab-types';
 import type { TabMeasure, ChordSelectionPending } from './tab/tab-types';
 import { chordAt, genTmd, splitRows } from './tab/tab-tmd-gen';
+
+// ---- 模块级剪贴板（跨段落切换不丢失） ----
+let moduleClipboard: TabMeasure[] = [];
 
 // ---- 组件 Props ----
 
@@ -49,6 +50,7 @@ interface TabEditorProps {
   previewOpen?: boolean;
   onTogglePreview?: () => void;
   onRhythmSelectionStart?: () => void;
+  rhythmMap?: Map<string, RhythmPattern>;
 }
 
 export interface TabEditorHandle {
@@ -63,7 +65,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   segmentName = '', onSegmentNameChange,
   onSave, saving, saveMsg,
   onTmdChange, onMeasuresChange, onChordSelectionStart, chordToApply, onChordApplied, onChordClick,
-  previewOpen, onTogglePreview, onRhythmSelectionStart,
+  previewOpen, onTogglePreview, onRhythmSelectionStart, rhythmMap,
 }: TabEditorProps, ref) {
   const [tempo, setTempo] = useState(initialTempo);
   const [bpm, setBpm] = useState(initialBpm);
@@ -82,6 +84,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   const undoStack = useRef<string[]>([]);
   const redoStack = useRef<string[]>([]);
   const lastSnapshot = useRef('');
+  const rhythmSeqCounter = useRef(0);
 
   // 底部节奏型拖选
   const [rhythmSel, setRhythmSel] = useState<{ mi: number; from: number; to: number } | null>(null);
@@ -115,6 +118,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
       if (!sel) return;
 
       const { mi: targetMi, from: selFrom, to: selTo } = sel;
+      const seq = ++rhythmSeqCounter.current;
 
       setMeasures(prev => {
         const snap = JSON.stringify(prev);
@@ -126,70 +130,9 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         return prev.map((m, mi) => {
           if (mi !== targetMi) return m;
           const next = structuredClone(m);
-          const slotCount = rhythm.slots.length;
-          const selBeatCount = selTo - selFrom + 1;
-
-          let totalWeight = 0;
-          for (let i = selFrom; i <= selTo; i++) totalWeight += next.beats[i].weight;
-          const group0 = next.beats[selFrom].group;
-          const perW = totalWeight / slotCount;
-          const newBeats = Array.from({ length: slotCount }, (_, i) =>
-            mkBeat(perW, group0 + Math.floor(i * 4 / slotCount))
-          );
-          const delta = slotCount - selBeatCount;
-          next.beats.splice(selFrom, selBeatCount, ...newBeats);
-
-          for (const c of next.chords) {
-            if (c.fromBeat >= selFrom + selBeatCount) {
-              c.fromBeat += delta; c.toBeat += delta; continue;
-            }
-            if (c.toBeat > selFrom && c.fromBeat < selFrom + selBeatCount) {
-              if (c.fromBeat >= selFrom) {
-                c.fromBeat = selFrom + Math.round((c.fromBeat - selFrom) * slotCount / selBeatCount);
-              }
-              if (c.toBeat <= selFrom + selBeatCount) {
-                c.toBeat = selFrom + Math.round((c.toBeat - selFrom) * slotCount / selBeatCount);
-              } else {
-                c.toBeat += delta;
-              }
-            }
-          }
-
-          for (let i = 0; i < slotCount; i++) {
-            const bi = selFrom + i;
-            if (bi >= next.beats.length) break;
-            const chord = next.chords.find(c => c.fromBeat <= bi && bi < c.toBeat);
-            if (!chord) continue;
-            const def = resolveChord(chord.name);
-            if (!def) continue;
-            const posIdx = chord.positionIndex ?? 0;
-            const cpos = def.positions?.[posIdx];
-            const frets: GuitarFrets = cpos
-              ? cpos.frets.map(f => f <= 0 ? f : f + cpos.baseFret - 1) as GuitarFrets
-              : def.frets;
-            const beat = next.beats[bi];
-            const slot = rhythm.slots[i];
-            const strings = emptyStrings();
-            if (slot.kind === 'strum' && slot.action === 'sustain') {
-              beat.strings = strings; beat.brush = undefined; continue;
-            }
-            const events = expandRhythm(rhythm.type, [slot], frets);
-            const ev = events[0];
-            if (ev && !ev.isRest && !ev.isSustain) {
-              for (const note of ev.notes) {
-                const si = note.string - 1;
-                if (si >= 0 && si < 6) {
-                  strings[si] = ev.isDeadNote
-                    ? { type: 'custom', fret: 0 }
-                    : { type: 'custom', fret: note.fret };
-                }
-              }
-            }
-            if (ev?.isDeadNote) beat.brush = 'ds';
-            else if (ev?.brushDirection === 'down') beat.brush = 'ad';
-            else if (ev?.brushDirection === 'up') beat.brush = 'au';
-            else beat.brush = undefined;
-            beat.strings = strings;
+          for (let i = selFrom; i <= selTo && i < next.beats.length; i++) {
+            next.beats[i].rhythmId = rhythm.id;
+            next.beats[i].rhythmSeq = seq;
           }
           return next;
         });
@@ -221,15 +164,6 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
     setMeasures(prev => { undoStack.current.push(JSON.stringify(prev)); lastSnapshot.current = snap; return JSON.parse(snap); });
   }, []);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'y') { e.preventDefault(); redo(); }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [undo, redo]);
-
   // ---- 交互状态 ----
   const [dragState, setDragState] = useState<{ mi: number; startBi: number; endBi: number } | null>(null);
   const [pendingSel, setPendingSel] = useState<ChordSelectionPending | null>(null);
@@ -239,9 +173,10 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   const [rhythmDrag, setRhythmDrag] = useState<{ mi: number; start: number; end: number } | null>(null);
   const [activeChord, setActiveChord] = useState<{ mi: number; fromBeat: number } | null>(null);
   const [measureSel, setMeasureSel] = useState<{ from: number; to: number } | null>(null);
-  const clipboardRef = useRef<TabMeasure[]>([]);
   const [containerW, setContainerW] = useState(900);
   const gridRef = useRef<HTMLDivElement>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef(0);
 
   const containerWRef = useRef(900);
   const rafRef = useRef(0);
@@ -322,7 +257,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   }, [pendingSel, chordToApply, onChordApplied, activeChord, measureSel, updateMeasures]);
 
   const rows = useMemo(() => splitRows(measures, containerW), [measures, containerW]);
-  const tmdText = useMemo(() => genTmd(measures, { bpm: tempo, tsLabel, sectionName: segmentName }), [measures, tempo, tsLabel, segmentName]);
+  const tmdText = useMemo(() => genTmd(measures, { bpm: tempo, tsLabel, sectionName: segmentName, rhythmMap }), [measures, tempo, tsLabel, segmentName, rhythmMap]);
   useEffect(() => { onTmdChange?.(tmdText); }, [tmdText, onTmdChange]);
   useEffect(() => { onMeasuresChange?.(measures, segmentName); }, [measures, segmentName, onMeasuresChange]);
 
@@ -467,12 +402,12 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
 
   const copySelectedMeasures = useCallback(() => {
     if (!measureSel) return;
-    clipboardRef.current = structuredClone(measures.slice(measureSel.from, measureSel.to + 1));
+    moduleClipboard = structuredClone(measures.slice(measureSel.from, measureSel.to + 1));
   }, [measureSel, measures]);
 
   const pasteAfter = useCallback((mi: number) => {
-    if (clipboardRef.current.length === 0) return;
-    const copied = structuredClone(clipboardRef.current);
+    if (moduleClipboard.length === 0) return;
+    const copied = structuredClone(moduleClipboard);
     updateMeasures(prev => [...prev.slice(0, mi + 1), ...copied, ...prev.slice(mi + 1)]);
     setMeasureSel(null);
   }, [updateMeasures]);
@@ -488,6 +423,33 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
   }, [measureSel, bpm, updateMeasures]);
 
   const measureSelCount = measureSel ? measureSel.to - measureSel.from + 1 : 0;
+
+  const showToast = useCallback((msg: string) => {
+    clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = window.setTimeout(() => setToast(null), 1200);
+  }, []);
+
+  // ---- 全局快捷键：Undo/Redo + Copy/Paste ----
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'y') { e.preventDefault(); redo(); }
+      // Ctrl/Cmd+C：复制选中小节
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c' && measureSel) {
+        e.preventDefault(); copySelectedMeasures();
+        showToast(`已复制 ${measureSel.to - measureSel.from + 1} 个小节`);
+      }
+      // Ctrl/Cmd+V：粘贴到选中小节后面，无选中则追加到末尾
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v' && moduleClipboard.length > 0) {
+        e.preventDefault();
+        pasteAfter(measureSel ? measureSel.to : measuresRef.current.length - 1);
+        showToast(`已粘贴 ${moduleClipboard.length} 个小节`);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [undo, redo, measureSel, copySelectedMeasures, pasteAfter, showToast]);
 
   // ---- 弦线交互 ----
   const handleStringClick = useCallback((mi: number, bi: number, si: number) => {
@@ -579,7 +541,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         onCopyMeasures={copySelectedMeasures}
         onDeleteMeasures={deleteSelectedMeasures}
         onCancelMeasureSel={() => setMeasureSel(null)}
-        hasClipboard={clipboardRef.current.length > 0}
+        hasClipboard={moduleClipboard.length > 0}
         onPasteAfter={() => { if (measureSel) pasteAfter(measureSel.to); }}
         previewOpen={previewOpen}
         onTogglePreview={onTogglePreview}
@@ -624,7 +586,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
                 onDeleteMeasures={deleteSelectedMeasures}
                 isMeasureSelected={!!measureSel && mi >= measureSel.from && mi <= measureSel.to}
                 onMeasureClick={(shiftKey, metaKey) => handleMeasureClick(mi, shiftKey, metaKey)}
-                hasClipboard={clipboardRef.current.length > 0}
+                hasClipboard={moduleClipboard.length > 0}
                 measureSelCount={measureSelCount}
                 measureCount={measures.length}
               />
@@ -653,6 +615,8 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
           )}
         </Collapsible.Content>
       </Collapsible.Root>
+
+      {toast && <div className="tab-toast">{toast}</div>}
     </div>
   );
 });

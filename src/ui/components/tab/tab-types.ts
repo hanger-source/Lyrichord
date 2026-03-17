@@ -26,6 +26,10 @@ export interface TabBeat {
   rest?: boolean;
   /** 扫弦方向: 'ad'=arpeggio down, 'au'=arpeggio up, 'ds'=dead slap */
   brush?: 'ad' | 'au' | 'ds';
+  /** 和弦级别节奏型 ID */
+  rhythmId?: string;
+  /** 节奏型应用序号 — 每次 applyRhythm 分配一个新序号，用于区分独立区间 */
+  rhythmSeq?: number;
 }
 
 export interface TabMeasure {

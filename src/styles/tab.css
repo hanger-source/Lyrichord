@@ -192,7 +192,7 @@
 .tab-tmd-actions { display: flex; gap: 6px; margin-top: 6px; justify-content: flex-end; }
 
 /* 底部节奏型拖选行 */
-.tab-rhythm-drag-row { display: flex; height: 18px; }
+.tab-rhythm-drag-row { display: flex; height: 18px; position: relative; }
 .tab-rhythm-drag-cell {
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; user-select: none; box-sizing: border-box;
@@ -203,6 +203,16 @@
 .tab-rhythm-drag-icon { font-size: 10px; color: var(--text-muted); opacity: 0.5; }
 .tab-rhythm-drag-cell:hover .tab-rhythm-drag-icon { opacity: 1; color: var(--accent); }
 .tab-rhythm-drag-cell.selected .tab-rhythm-drag-icon { opacity: 1; color: var(--orange); }
+
+/* 小节级节奏型 ID 标签 */
+.tab-rhythm-id-label {
+  position: absolute; top: -1px;
+  font-size: 9px; color: var(--accent); background: var(--accent-dim);
+  padding: 0 4px; border-radius: 0 0 var(--radius) 0;
+  pointer-events: none; white-space: nowrap; z-index: 1;
+  line-height: 16px; opacity: 0.85;
+  text-align: center; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* 弦名列底部节奏型标签 */
 .tab-label-rhythm-row {
@@ -223,3 +233,17 @@
 .tab-ctx-menu-item:hover { background: var(--bg-hover); }
 .tab-ctx-menu-item--danger { color: var(--red, #ef4444); }
 .tab-ctx-menu-item--danger:hover { background: rgba(239, 68, 68, 0.1); }
+
+/* Toast 提示 */
+.tab-toast {
+  position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
+  padding: 6px 16px; font-size: 12px; font-weight: 500;
+  color: var(--accent-text); background: var(--accent);
+  border-radius: var(--radius); box-shadow: var(--shadow-md);
+  pointer-events: none; z-index: 9999;
+  animation: tab-toast-in 0.15s ease-out;
+}
+@keyframes tab-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}

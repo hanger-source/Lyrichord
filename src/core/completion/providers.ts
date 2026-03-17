@@ -162,6 +162,27 @@ const sectionRhythmRef: TmdCompletionProvider = {
   },
 };
 
+/** 小节行内 @ 后 — 节奏型引用候选 (C@R1 格式) */
+const measureRhythmRef: TmdCompletionProvider = {
+  id: 'measure-rhythm-ref',
+  complete(ctx) {
+    if (ctx.zone !== 'body') return null;
+    if (!ctx.lineText.trimStart().startsWith('|')) return null;
+    // 匹配和弦名后面的 @，如 "C@" 或 "Am@R"
+    const m = ctx.textBefore.match(/@(\w*)$/);
+    if (!m) return null;
+    if (ctx.data.rhythmIds.length === 0) return null;
+    const prefix = m[1];
+    const from = ctx.pos - prefix.length - 1; // 包含 @
+    const options: Completion[] = ctx.data.rhythmIds.map(id => ({
+      label: `@${id}`,
+      type: 'variable',
+      detail: '节奏型引用',
+    }));
+    return { from, options, filter: true };
+  },
+};
+
 /** 小节行内 — 和弦名候选 */
 const measureChord: TmdCompletionProvider = {
   id: 'measure-chord',
@@ -319,6 +340,7 @@ export const providers: TmdCompletionProvider[] = [
   sectionRhythmRef,
   sectionName,
   inlineChordMark,
+  measureRhythmRef,
   measureChord,
   bodyAtSign,
   // Body — 通用

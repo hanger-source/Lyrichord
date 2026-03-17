@@ -225,8 +225,16 @@ function scanMeasureLine(
     } else if (part === '.') {
       tokens.push(tok('NOTE_EVENT', '.', lineNum, col));
     } else {
-      // 和弦名: C, Am, D/#F, B7, Em7, Gm, Eb 等
-      tokens.push(tok('CHORD_BEAT', part, lineNum, col));
+      // 和弦名可能带节奏型引用: C@R1, Am@R2A
+      const atIdx = part.indexOf('@');
+      if (atIdx > 0) {
+        const chordName = part.slice(0, atIdx);
+        const rhythmRef = part.slice(atIdx); // "@R1"
+        tokens.push(tok('CHORD_BEAT', chordName, lineNum, col));
+        tokens.push(tok('RHYTHM_REF', rhythmRef, lineNum, col + atIdx));
+      } else {
+        tokens.push(tok('CHORD_BEAT', part, lineNum, col));
+      }
     }
   }
 }

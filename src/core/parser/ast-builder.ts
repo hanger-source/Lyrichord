@@ -42,10 +42,12 @@ export interface BuildWarning {
 /**
  * 小节行解析出的和弦-拍位结构
  * | C . D . | → [{chord:'C', beats:2}, {chord:'D', beats:2}]
+ * | C@R1 . D . | → [{chord:'C', beats:2, rhythmId:'R1'}, {chord:'D', beats:2}]
  */
 interface MeasureChordSlot {
   chord: string | null;  // null = 延续上一个和弦 (不应该出现在第一个位置)
   beats: number;         // 占几拍
+  rhythmId?: string;     // 和弦级别节奏型引用
 }
 
 /** 一个完整小节的收集结果 */
@@ -121,7 +123,16 @@ export function buildSong(tokens: Token[]): BuildResult {
         currentSection = t.value;
         break;
       case 'RHYTHM_REF':
-        currentRhythmId = t.value.replace(/^@/, '').trim();
+        // 段落级引用 (紧跟 SECTION) 或和弦级引用 (小节行内)
+        if (inMeasure) {
+          // 小节行内的 @R1 — 附着到最近的 chordSlot（和弦级别）
+          const rid = t.value.replace(/^@/, '').trim();
+          if (measureSlots.length > 0) {
+            measureSlots[measureSlots.length - 1].rhythmId = rid;
+          }
+        } else {
+          currentRhythmId = t.value.replace(/^@/, '').trim();
+        }
         break;
 
       case 'BAR_LINE':
@@ -227,12 +238,12 @@ export function buildSong(tokens: Token[]): BuildResult {
 
     if (currentSection && currentSection !== lastFlushedSection) {
       mb.section = { name: currentSection };
-      mb.rhythmId = currentRhythmId ?? undefined;
       lastFlushedSection = currentSection;
-    } else if (currentRhythmId) {
-      // 段落内后续小节也继承节奏型
-      mb.rhythmId = currentRhythmId;
     }
+
+    // mb.rhythmId 只用于段落级引用（[Section] 后的 @R1）
+    // 和弦级别的 rhythmId 已经存在每个 beat 上，不提升到 mb
+    mb.rhythmId = currentRhythmId ?? undefined;
 
     masterBars.push(mb);
 
@@ -366,15 +377,29 @@ function buildTemplateBar(
 ): Bar {
   const beats: Beat[] = [];
 
-  // 从 chordSlots 构建 beat
+  // 小节行 token 数量 = 拍号拍数（严格 1:1）
+  // | C . D . | → 4 token = 4/4 拍的 4 拍
+  // 每个 token 占 1 拍，. 延续前一个和弦
+  // 如果 token 数量不匹配拍号，在 validator 层报 warning
+  const beatsPerMeasure = ts.numerator * (4 / ts.denominator);
+  const ticksPerBeat = 960; // 四分音符 = 960 ticks (MIDI 标准 PPQ)
+  let tickPos = 0;
+
   for (const slot of collected.chordSlots) {
+    // 每个 slot 的 beats 字段 = 连续 token 数（含 . 延续拍）
+    // 直接映射为实际拍数，不做比例缩放
+    const slotTicks = slot.beats * ticksPerBeat;
     const dur = beatsToDuration(slot.beats);
-    beats.push({
+    const beat: Beat = {
       duration: dur,
       notes: [],
       isRest: false,
       chordId: slot.chord ?? undefined,
-    });
+      rhythmId: slot.rhythmId,
+      tick: tickPos,
+    };
+    beats.push(beat);
+    tickPos += slotTicks;
   }
 
   // 对齐歌词: lyricsTokens 里的 CHORD_MARK 对应 beat 的 chordId
