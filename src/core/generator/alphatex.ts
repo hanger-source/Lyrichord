@@ -40,14 +40,13 @@
 import type {
   Song, Bar, Beat, RhythmPattern, GuitarFrets,
   AlphaTexOutput, GeneratedMeasure,
-  DurationValue, Dynamic, Note, RhythmSlot,
+  Note, RhythmSlot,
 } from '../types';
 import {
-  Duration, durationToAlphaTex, durationToBeats, beatsToDuration,
+  durationToAlphaTex, durationToBeats, beatsToDuration,
 } from '../types';
 import { resolveChord } from '../chord/resolver';
 import { notesToAlphaTex } from '../chord/voicing';
-import { dynamicToAlphaTex } from './dynamics';
 
 export function generate(song: Song): AlphaTexOutput {
   const measures: GeneratedMeasure[] = [];
@@ -63,9 +62,6 @@ export function generate(song: Song): AlphaTexOutput {
   const ts = song.meta.timeSignature;
   headerLines.push(`\\ts ${ts.numerator} ${ts.denominator}`);
 
-  const beatsPerMeasure = ts.numerator * (4 / ts.denominator);
-
-  let activeRhythmId: string | null = null;
   let lastChordFrets: GuitarFrets | null = null;
   let lastChordId: string | null = null;
 
@@ -77,12 +73,6 @@ export function generate(song: Song): AlphaTexOutput {
     const mb = song.masterBars[i];
     const bar = song.bars[i];
     if (!bar) continue;
-
-    if (mb.rhythmId) activeRhythmId = mb.rhythmId;
-
-    const rhythm = activeRhythmId
-      ? song.rhythmLibrary.get(activeRhythmId) ?? null
-      : null;
 
     // 检查是否是 tex 直通模式
     const isTexMode = bar.beats.some(b => (b as any)._rawTex);
@@ -106,12 +96,94 @@ export function generate(song: Song): AlphaTexOutput {
         }
       }
     } else {
-      // 节奏型展开模式
-      const timeline = buildTimeline(bar, song, lastChordId, lastChordFrets);
-      if (timeline.endChordId) lastChordId = timeline.endChordId;
-      if (timeline.endFrets) lastChordFrets = timeline.endFrets;
+      // ── 节奏型区间展开模式 ──
+      //
+      // 核心概念：@R1 标记的是一个"节奏型区间"的起始，不是每个和弦独立的节奏型。
+      // 一个区间内可以有多个和弦切换，节奏型在区间内完整展开一遍。
+      //
+      // 例: | G@R1 D A7@R1 . |
+      //   区间1: G+D 共 2 拍，R1 完整展开，和弦在中间切换
+      //   区间2: A7 共 2 拍，R1 完整展开
+      //
+      // 分组规则：
+      //   有 rhythmId 的 beat → 开始新区间
+      //   没有 rhythmId 的 beat → 继承前面的区间（区间内和弦切换）
+      //
+      const defaultRhythmId = mb.rhythmId ?? null;
+      const beatsPerMeasure = ts.numerator * (4 / ts.denominator);
 
-      measureTex = generateMeasure(rhythm, timeline, beatsPerMeasure);
+      // ---- 按区间分组 beat ----
+      interface RhythmRegion {
+        rhythmId: string | null;
+        beats: Beat[];
+        totalBeats: number;
+      }
+
+      const regions: RhythmRegion[] = [];
+      // 保存进入本小节前的 lastChordId，用于区间生成时的 ch 标记判断
+      const prevChordBeforeBar = lastChordId;
+
+      for (const beat of bar.beats) {
+        const rid = beat.rhythmId ?? null;
+        if (rid) {
+          // 显式 @R1 标记 → 开始新区间
+          regions.push({ rhythmId: rid, beats: [beat], totalBeats: durationToBeats(beat.duration) });
+        } else if (regions.length > 0 && regions[regions.length - 1].rhythmId) {
+          // 没有 @R1 且前面有区间 → 继承，属于同一区间内的和弦切换
+          const last = regions[regions.length - 1];
+          last.beats.push(beat);
+          last.totalBeats += durationToBeats(beat.duration);
+        } else {
+          // 没有节奏型的 beat（也没有前面的区间可继承）
+          // fallback 到段落级 rhythmId 或无节奏型
+          const fallbackRid = defaultRhythmId;
+          if (fallbackRid) {
+            regions.push({ rhythmId: fallbackRid, beats: [beat], totalBeats: durationToBeats(beat.duration) });
+          } else {
+            regions.push({ rhythmId: null, beats: [beat], totalBeats: durationToBeats(beat.duration) });
+          }
+        }
+
+        // 更新 lastChord 追踪
+        if (beat.chordId) {
+          lastChordId = beat.chordId;
+          const f = resolveFrets(beat.chordId, song);
+          if (f) lastChordFrets = f;
+        }
+      }
+
+      // ---- 逐区间生成 AlphaTex ----
+      const regionParts: string[] = [];
+      // 用进入本小节前的 prevChordId 开始追踪
+      let regionPrevChord = prevChordBeforeBar;
+
+      for (const region of regions) {
+        const rid = region.rhythmId;
+        const rhythm = rid ? song.rhythmLibrary.get(rid) ?? null : null;
+
+        if (rhythm && rhythm.slots.length > 0) {
+          const regionBar: Bar = { masterBarIndex: bar.masterBarIndex, beats: region.beats };
+          const result = generateRegionWithRhythm(
+            rhythm, regionBar, song, region.totalBeats, lastChordFrets, regionPrevChord,
+          );
+          regionParts.push(result.tex);
+          regionPrevChord = result.lastChordId;
+        } else {
+          // 无节奏型 → fallback 逐 beat
+          for (const beat of region.beats) {
+            const frets = beat.chordId ? resolveFrets(beat.chordId, song) : lastChordFrets;
+            if (frets) {
+              regionParts.push(generateFallbackSegment(frets, durationToBeats(beat.duration), beat.chordId ?? null));
+            } else {
+              const dur = durationToAlphaTex(beat.duration);
+              const props = beat.chordId ? `{ch "${beat.chordId}"}` : '';
+              regionParts.push(props ? `r.${dur} ${props}` : `r.${dur}`);
+            }
+          }
+        }
+      }
+
+      measureTex = regionParts.join(' ');
 
       // 收集歌词
       for (const beat of bar.beats) {
@@ -201,6 +273,135 @@ export function generate(song: Song): AlphaTexOutput {
 
 
 // ============================================================
+// 节奏型区间展开
+// ============================================================
+
+/**
+ * 在一个节奏型区间内完整展开节奏型。
+ *
+ * 区间 = 从一个 @R1 标记到下一个 @R1 标记之间的所有 beat。
+ * 节奏型完整走一遍，slot 时值 = 区间总拍数 / slots.length。
+ * 区间内多个和弦在对应 slot 位置切换。
+ *
+ * 例: R1 = D-DU-DUU (8 slot), 区间 = G+D 共 2 拍
+ *   每 slot = 2/8 = 0.25 拍 (十六分音符)
+ *   G 占 1 拍 = slot 0-3, D 占 1 拍 = slot 4-7
+ */
+function generateRegionWithRhythm(
+  rhythm: RhythmPattern,
+  regionBar: Bar,
+  song: Song,
+  regionTotalBeats: number,
+  inheritedFrets: GuitarFrets | null,
+  prevChordId: string | null,
+): { tex: string; lastChordId: string | null } {
+  const slotCount = rhythm.slots.length;
+  const slotDur = regionTotalBeats / slotCount; // 每 slot 的拍数
+
+  // 构建 slot → 和弦映射
+  interface ChordSpan {
+    chordId: string | null;
+    frets: GuitarFrets | null;
+    startBeat: number;
+    endBeat: number;
+  }
+
+  const spans: ChordSpan[] = [];
+  let pos = 0;
+  for (const beat of regionBar.beats) {
+    const dur = durationToBeats(beat.duration);
+    const frets = beat.chordId ? resolveFrets(beat.chordId, song) : null;
+    spans.push({
+      chordId: beat.chordId ?? null,
+      frets: frets ?? inheritedFrets,
+      startBeat: pos,
+      endBeat: pos + dur,
+    });
+    pos += dur;
+  }
+
+  function chordAtSlot(si: number): ChordSpan | null {
+    const slotStart = si * slotDur;
+    for (const sp of spans) {
+      if (slotStart >= sp.startBeat - 0.01 && slotStart < sp.endBeat - 0.01) {
+        return sp;
+      }
+    }
+    return spans.length > 0 ? spans[spans.length - 1] : null;
+  }
+
+  // 合并 sustain，追踪和弦切换
+  interface MergedEvent {
+    slot: RhythmSlot;
+    slotSpan: number;
+    chordId: string | null;
+    frets: GuitarFrets | null;
+  }
+
+  const events: MergedEvent[] = [];
+
+  for (let si = 0; si < slotCount; si++) {
+    const slot = rhythm.slots[si];
+    const span = chordAtSlot(si);
+    const cid = span?.chordId ?? null;
+    const isSustain = slot.kind === 'strum' && slot.action === 'sustain';
+
+    const canMerge = isSustain && events.length > 0
+      && events[events.length - 1].chordId === cid;
+
+    if (canMerge) {
+      events[events.length - 1].slotSpan++;
+    } else {
+      events.push({
+        slot,
+        slotSpan: 1,
+        chordId: cid,
+        frets: span?.frets ?? inheritedFrets,
+      });
+    }
+  }
+
+  const parts: string[] = [];
+
+  for (const ev of events) {
+    const eventBeats = ev.slotSpan * slotDur;
+    const durVal = beatsToDuration(eventBeats);
+    const durStr = durationToAlphaTex(durVal);
+
+    const props: string[] = [];
+    // ch 标记只在和弦切换时输出
+    if (ev.chordId && ev.chordId !== prevChordId) {
+      props.push(`ch "${ev.chordId}"`);
+    }
+    if (ev.chordId) prevChordId = ev.chordId;
+
+    const frets = ev.frets;
+    if (!frets) {
+      const propsStr = wrapProps(props);
+      parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
+      continue;
+    }
+
+    const { notes, brush } = slotToNotes(ev.slot, frets);
+    if (notes.length === 0) {
+      const propsStr = wrapProps(props);
+      parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
+    } else {
+      const noteTex = notesToAlphaTex(notes);
+      const allProps = brush
+        ? wrapProps([brush, ...props])
+        : wrapProps(props);
+      parts.push(allProps
+        ? `${noteTex}.${durStr} ${allProps}`
+        : `${noteTex}.${durStr}`);
+    }
+  }
+
+  return { tex: parts.join(' '), lastChordId: prevChordId };
+}
+
+
+// ============================================================
 // TEX 直通模式
 // ============================================================
 
@@ -209,9 +410,9 @@ export function generate(song: Song): AlphaTexOutput {
  * 和弦标记用 {ch "X"} 属性
  */
 function generateTexPassthrough(
-  bar: Bar, song: Song,
-  inheritedChordId: string | null,
-  inheritedFrets: GuitarFrets | null,
+  bar: Bar, _song: Song,
+  _inheritedChordId: string | null,
+  _inheritedFrets: GuitarFrets | null,
 ): string {
   const parts: string[] = [];
 
@@ -247,231 +448,11 @@ function generateTexPassthrough(
 }
 
 
-// ============================================================
-// Timeline: 从模板 beats 提取和弦变化点 + 歌词位置
-// ============================================================
-
-interface ChordChange {
-  beatPos: number;
-  chordId: string;
-  frets: GuitarFrets;
-}
-
-interface LyricsAt {
-  beatPos: number;
-  text: string;
-}
-
-interface MeasureTimeline {
-  chordChanges: ChordChange[];
-  lyrics: LyricsAt[];
-  inheritedFrets: GuitarFrets | null;
-  endChordId: string | null;
-  endFrets: GuitarFrets | null;
-}
-
-function buildTimeline(
-  bar: Bar, song: Song,
-  inheritedChordId: string | null,
-  inheritedFrets: GuitarFrets | null,
-): MeasureTimeline {
-  const chordChanges: ChordChange[] = [];
-  const lyrics: LyricsAt[] = [];
-  let currentChordId = inheritedChordId;
-  let currentFrets = inheritedFrets;
-  let beatPos = 0;
-
-  for (const beat of bar.beats) {
-    const dur = durationToBeats(beat.duration);
-
-    if (beat.chordId) {
-      const frets = resolveFrets(beat.chordId, song);
-      if (frets) {
-        chordChanges.push({ beatPos, chordId: beat.chordId, frets });
-        currentChordId = beat.chordId;
-        currentFrets = frets;
-      }
-    }
-
-    if (beat.lyrics) {
-      lyrics.push({ beatPos, text: beat.lyrics });
-    }
-
-    beatPos += dur;
-  }
-
-  return {
-    chordChanges,
-    lyrics,
-    inheritedFrets,
-    endChordId: currentChordId,
-    endFrets: currentFrets,
-  };
-}
-
 function resolveFrets(chordId: string, song: Song): GuitarFrets | null {
   const fromLib = song.chordLibrary.get(chordId);
   if (fromLib) return fromLib.frets;
   const resolved = resolveChord(chordId);
   return resolved ? resolved.frets : null;
-}
-
-
-/**
- * 节奏型展开生成
- *
- * 核心算法:
- *   1. 遍历 rhythm.slots，按 beatPos 匹配 timeline 中的和弦变化点
- *   2. 和弦变化时重置 patIdx（节奏型从头开始）
- *   3. 合并连续 sustain slot 到前一个 event 的 slotSpan
- *   4. 每个 event 转换为 AlphaTex beat 文本
- *
- * 时值计算: slotBeats = beatsPerMeasure / slots.length
- *   例: 4/4 拍 + 16 slots → 每 slot = 0.25 拍 = 十六分音符
- */
-
-/**
- * 每个 slot 占多少拍。
- * 节奏型统一代表一整小节，slot 时值 = 小节总拍数 / slot 数量。
- */
-function slotBeats(rhythm: RhythmPattern, beatsPerMeasure: number): number {
-  return beatsPerMeasure / rhythm.slots.length;
-}
-
-function generateMeasure(
-  rhythm: RhythmPattern | null,
-  timeline: MeasureTimeline,
-  beatsPerMeasure: number,
-): string {
-  if (!rhythm || rhythm.slots.length === 0) {
-    return generateFallbackMeasure(timeline, beatsPerMeasure);
-  }
-
-  const bps = slotBeats(rhythm, beatsPerMeasure);
-  const slotCount = rhythm.slots.length;
-  const totalSlots = slotCount; // 一小节 = 一轮完整节奏型
-
-  interface SlotInfo {
-    beatPos: number;
-    slot: RhythmSlot;
-    frets: GuitarFrets | null;
-    chordId: string | null;
-  }
-
-  const slots: SlotInfo[] = [];
-  let patIdx = 0;
-  let currentFrets = timeline.inheritedFrets;
-  let currentChordId: string | null = null;
-  let chordChangeIdx = 0;
-
-  for (let i = 0; i < totalSlots; i++) {
-    const beatPos = i * bps;
-
-    let newChord = false;
-    while (chordChangeIdx < timeline.chordChanges.length &&
-           timeline.chordChanges[chordChangeIdx].beatPos <= beatPos + 0.001) {
-      const cc = timeline.chordChanges[chordChangeIdx];
-      currentFrets = cc.frets;
-      currentChordId = cc.chordId;
-      newChord = true;
-      chordChangeIdx++;
-    }
-
-    if (newChord) patIdx = 0;
-
-    slots.push({
-      beatPos,
-      slot: rhythm.slots[patIdx % slotCount],
-      frets: currentFrets,
-      chordId: newChord ? currentChordId : null,
-    });
-
-    patIdx++;
-  }
-
-  // 合并 sustain
-  interface MergedEvent {
-    beatPos: number;
-    slot: RhythmSlot;
-    frets: GuitarFrets | null;
-    chordId: string | null;
-    slotSpan: number;
-  }
-
-  const events: MergedEvent[] = [];
-  for (const s of slots) {
-    const isSustain = s.slot.kind === 'strum' && s.slot.action === 'sustain';
-    if (isSustain && events.length > 0) {
-      events[events.length - 1].slotSpan++;
-    } else {
-      events.push({ ...s, slotSpan: 1 });
-    }
-  }
-
-  const parts: string[] = [];
-
-  for (const ev of events) {
-    const eventBeats = ev.slotSpan * bps;
-    const durVal = beatsToDuration(eventBeats);
-    const durStr = durationToAlphaTex(durVal);
-
-    const props: string[] = [];
-    if (ev.chordId) {
-      props.push(`ch "${ev.chordId}"`);
-    }
-
-    if (!ev.frets) {
-      const propsStr = wrapProps(props);
-      parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
-    } else {
-      const { notes, brush } = slotToNotes(ev.slot, ev.frets);
-      if (notes.length === 0) {
-        const propsStr = wrapProps(props);
-        parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
-      } else {
-        const noteTex = notesToAlphaTex(notes);
-        const allProps = brush
-          ? wrapProps([brush, ...props])
-          : wrapProps(props);
-        parts.push(allProps
-          ? `${noteTex}.${durStr} ${allProps}`
-          : `${noteTex}.${durStr}`);
-      }
-    }
-  }
-
-  return parts.join(' ');
-}
-
-function generateFallbackMeasure(
-  timeline: MeasureTimeline,
-  beatsPerMeasure: number,
-): string {
-  const beatCount = Math.round(beatsPerMeasure);
-  const dur = beatsToDuration(beatsPerMeasure / beatCount);
-  const durStr = durationToAlphaTex(dur);
-  const parts: string[] = [];
-
-  for (let bi = 0; bi < beatCount; bi++) {
-    const beatPos = bi * (beatsPerMeasure / beatCount);
-    const frets = getChordAtBeat(beatPos, timeline);
-    const props: string[] = [];
-    const cc = findChordChangeAt(beatPos, beatsPerMeasure / beatCount, timeline);
-    if (cc) props.push(`ch "${cc.chordId}"`);
-
-    if (!frets) {
-      const propsStr = wrapProps(props);
-      parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
-      continue;
-    }
-
-    const root = findRootNote(frets);
-    const noteTex = notesToAlphaTex([root]);
-    const propsStr = wrapProps(props);
-    parts.push(propsStr ? `${noteTex}.${durStr} ${propsStr}` : `${noteTex}.${durStr}`);
-  }
-
-  return parts.join(' ');
 }
 
 
@@ -532,27 +513,6 @@ function slotToNotes(
 }
 
 // ============================================================
-// 查找辅助
-// ============================================================
-
-function getChordAtBeat(beatPos: number, timeline: MeasureTimeline): GuitarFrets | null {
-  let found: GuitarFrets | null = null;
-  for (const cc of timeline.chordChanges) {
-    if (cc.beatPos <= beatPos + 0.001) found = cc.frets;
-  }
-  return found ?? timeline.inheritedFrets;
-}
-
-function findChordChangeAt(
-  beatPos: number, slotDuration: number, timeline: MeasureTimeline,
-): ChordChange | null {
-  for (const cc of timeline.chordChanges) {
-    if (cc.beatPos >= beatPos - 0.001 && cc.beatPos < beatPos + slotDuration - 0.001) return cc;
-  }
-  return null;
-}
-
-// ============================================================
 // 工具函数
 // ============================================================
 
@@ -573,4 +533,27 @@ function getAllPlayable(frets: GuitarFrets): Note[] {
 
 function wrapProps(props: string[]): string {
   return props.length > 0 ? `{${props.join(' ')}}` : '';
+}
+
+
+// ============================================================
+// 无节奏型 fallback
+// ============================================================
+
+/**
+ * 无节奏型时的 fallback — 简单根音
+ */
+function generateFallbackSegment(
+  frets: GuitarFrets,
+  chordBeats: number,
+  chordId: string | null,
+): string {
+  const dur = beatsToDuration(chordBeats);
+  const durStr = durationToAlphaTex(dur);
+  const root = findRootNote(frets);
+  const noteTex = notesToAlphaTex([root]);
+  const props: string[] = [];
+  if (chordId) props.push(`ch "${chordId}"`);
+  const propsStr = wrapProps(props);
+  return propsStr ? `${noteTex}.${durStr} ${propsStr}` : `${noteTex}.${durStr}`;
 }

@@ -222,7 +222,7 @@ export function App() {
         <div style={{ display: state.sidebarTab ? 'flex' : 'none' }}>
           <Sidebar
             tab={state.sidebarTab ?? 'chords'}
-            song={state.pipelineResult?.song ?? null}
+            song={editorMode === 'tab' ? (tabPipelineResult?.song ?? null) : (state.pipelineResult?.song ?? null)}
             currentScoreId={state.currentScoreId}
             onSelectScore={handleSidebarSelectScore}
             onDeleteScore={state.handleDeleteScore}

@@ -209,7 +209,7 @@ function tokenBody(stream: any, state: TmdState): string | null {
   return null;
 }
 
-/** 小节行 tokenizer: | C . D . | */
+/** 小节行 tokenizer: | C . D@R1 . | */
 function tokenMeasureLine(stream: any): string | null {
   if (stream.eatSpace()) return null;
 
@@ -221,9 +221,15 @@ function tokenMeasureLine(stream: any): string | null {
     return 'operator';
   }
 
-  // 和弦名
+  // 和弦名（可能带 @R1 节奏型引用后缀）
   if (stream.match(/^[A-G][#b]?(?:m|maj|min|dim|aug|sus[24]?|add[249]?|7|9|11|13|6)?(?:\/[A-G#b]+)?/)) {
+    // 检查紧跟的 @R1 引用 — 不消费，留给下一轮
     return 'typeName';
+  }
+
+  // 小节行内的 @R1 节奏型引用
+  if (stream.match(/^@\w+/)) {
+    return 'atRef';
   }
 
   stream.next();

@@ -9,6 +9,8 @@ import { measureWidth } from './TabMeasureView';
 import type { TabMeasure, ChordRegion } from './tab-types';
 import { STRING_COUNT, LABEL_W } from './tab-types';
 
+import type { RhythmPattern } from '../../../core/types';
+
 // ---- 内部辅助 ----
 
 export function chordAt(measures: TabMeasure[], mi: number, bi: number): ChordRegion | null {
@@ -153,24 +155,135 @@ function mToTex(m: TabMeasure, measures: TabMeasure[], mi: number): string {
   return parts.join(' ');
 }
 
-function mToChordLine(m: TabMeasure): string {
-  const groups = new Map<number, string | null>();
-  for (const b of m.beats) { if (!groups.has(b.group)) groups.set(b.group, null); }
-  for (const c of m.chords) { if (c.fromBeat < m.beats.length) groups.set(m.beats[c.fromBeat].group, c.name); }
-  return `| ${[...groups.values()].map(v => v ?? '.').join(' ')} |`;
+/**
+ * 生成小节行 chord line
+ *
+ * token 数量严格等于拍号分子（4/4 → 4 个 token，3/4 → 3 个 token）。
+ * 每个 token 对应一拍：有和弦起始或 rhythmId 变化 → 和弦名+@rid，否则 → "."（延续）。
+ *
+ * 关键：同一个和弦区间内，如果 rhythmId 发生变化，需要在变化点重新输出和弦名。
+ * 例：G 占整个小节，前半 R1 后半 R1Plus → | G@R1 . G@R1Plus . |
+ *
+ * @param m 小节数据
+ * @param tsNumerator 拍号分子（默认 4）
+ */
+function mToChordLine(m: TabMeasure, tsNumerator = 4): string {
+  const totalWeight = m.beats.reduce((s, b) => s + b.weight, 0);
+  const weightPerBeat = totalWeight / tsNumerator;
+
+  // 为每个 beat 计算 weight 起始位置
+  const beatStarts: number[] = [];
+  let wPos = 0;
+  for (const b of m.beats) {
+    beatStarts.push(wPos);
+    wPos += b.weight;
+  }
+
+  // 辅助：根据 weight 位置找到对应的 beat index
+  function beatIndexAtWeight(w: number): number {
+    for (let bi = 0; bi < m.beats.length; bi++) {
+      if (Math.abs(beatStarts[bi] - w) < 0.01) return bi;
+    }
+    return -1;
+  }
+
+  // 辅助：根据 beat index 找到所属的和弦名
+  function chordNameAtBeat(bi: number): string | null {
+    for (let i = m.chords.length - 1; i >= 0; i--) {
+      if (m.chords[i].fromBeat <= bi && bi < m.chords[i].toBeat) return m.chords[i].name;
+    }
+    return null;
+  }
+
+  // 辅助：获取一个 token 覆盖范围内的 rhythmId 和 rhythmSeq
+  function ridForToken(tokenIdx: number): { rid: string | undefined; seq: number | undefined } {
+    const wStart = tokenIdx * weightPerBeat;
+    const wEnd = wStart + weightPerBeat;
+    for (let bi = 0; bi < m.beats.length; bi++) {
+      if (beatStarts[bi] >= wStart - 0.01 && beatStarts[bi] < wEnd - 0.01) {
+        if (m.beats[bi].rhythmId) {
+          return { rid: m.beats[bi].rhythmId, seq: m.beats[bi].rhythmSeq };
+        }
+      }
+    }
+    return { rid: undefined, seq: undefined };
+  }
+
+  // 生成 tsNumerator 个 token
+  //
+  // 核心规则：
+  //   @R1 只在节奏型区间起始处输出（rhythmSeq 变化时）
+  //   区间内的和弦切换只输出和弦名（不带 @R1）
+  //   和弦没变 + 同一区间 → .（延续）
+  //
+  // 例：前半小节 G+D 用 R1(seq=1)，后半 A7 用 R1(seq=2)
+  //   → | G@R1 D A7@R1 . |
+  //   G@R1 开始第一个 R1 区间，D 在区间内切换和弦，A7@R1 开始第二个区间
+  const parts: string[] = [];
+  let prevRid: string | undefined;
+  let prevSeq: number | undefined;
+  let prevChordName: string | null = null;
+
+  for (let i = 0; i < tsNumerator; i++) {
+    const beatStart = i * weightPerBeat;
+    const bi = beatIndexAtWeight(beatStart);
+    const { rid, seq } = ridForToken(i);
+    const chordName = bi >= 0 ? chordNameAtBeat(bi) : null;
+
+    const isChordStart = m.chords.some(c =>
+      c.fromBeat < m.beats.length && Math.abs(beatStarts[c.fromBeat] - beatStart) < 0.01
+    );
+
+    // 节奏型区间边界：rid 或 seq 变了
+    const regionChanged = i > 0 && (rid !== prevRid || seq !== prevSeq);
+    // 和弦变了（同一区间内）
+    const chordChanged = chordName !== prevChordName && chordName != null;
+
+    if (regionChanged && chordName) {
+      // 新的节奏型区间 → 和弦名@rid
+      parts.push(rid ? `${chordName}@${rid}` : chordName);
+    } else if (isChordStart && chordName) {
+      if (i === 0 || regionChanged) {
+        // 小节第一个 token 或区间起始 → 带 @rid
+        parts.push(rid ? `${chordName}@${rid}` : chordName);
+      } else {
+        // 区间内的和弦起始 → 只输出和弦名，不带 @rid
+        parts.push(chordName);
+      }
+    } else if (chordChanged && chordName) {
+      // 区间内和弦切换（非 chord region 起始，但和弦名变了）
+      parts.push(chordName);
+    } else {
+      parts.push('.');
+    }
+
+    prevRid = rid;
+    prevSeq = seq;
+    if (chordName != null) prevChordName = chordName;
+  }
+
+  return `| ${parts.join(' ')} |`;
 }
 
 /**
  * 生成单个段落的 TMD body（不含 header）
+ *
+ * @param tsLabel 拍号标签（如 "4/4"），用于确定 chord line 的 token 数量
  */
 export function genSectionBody(
   measures: TabMeasure[],
   sectionName?: string,
-): { body: string; usedChords: ChordRegion[] } {
+  tsLabel?: string,
+): { body: string; usedChords: ChordRegion[]; usedRhythmIds: string[] } {
   const section = sectionName?.trim() || 'Untitled';
+  const tsNumerator = parseTsNumerator(tsLabel);
   const usedChords: ChordRegion[] = [];
   const seen = new Set<string>();
+  const rhythmIds = new Set<string>();
   for (const m of measures) {
+    for (const b of m.beats) {
+      if (b.rhythmId) rhythmIds.add(b.rhythmId);
+    }
     for (const c of m.chords) {
       if (!seen.has(c.name)) {
         seen.add(c.name);
@@ -180,11 +293,18 @@ export function genSectionBody(
   }
 
   const lines = measures
-    .map((m, i) => hasContent(m) ? `${mToChordLine(m)}\ntex: ${mToTex(m, measures, i)}` : null)
+    .map((m, i) => {
+      if (!hasContent(m)) return null;
+      const chordLine = mToChordLine(m, tsNumerator);
+      // 有 rhythmId 的 beat 用节奏型引用，不展开 tex
+      const hasRhythm = m.beats.some(b => b.rhythmId);
+      if (hasRhythm) return chordLine;
+      return `${chordLine}\ntex: ${mToTex(m, measures, i)}`;
+    })
     .filter(Boolean).join('\n\n');
 
-  if (!lines) return { body: '', usedChords };
-  return { body: `[${section}]\n\n${lines}`, usedChords };
+  if (!lines) return { body: '', usedChords, usedRhythmIds: [] };
+  return { body: `[${section}]\n\n${lines}`, usedChords, usedRhythmIds: Array.from(rhythmIds) };
 }
 
 /**
@@ -215,29 +335,54 @@ export function genChordDefs(chordRegions: Iterable<ChordRegion>): string[] {
 /**
  * 生成 TMD header
  */
-export function genTmdHeader(tempo: number, tsLabel: string, chordDefs: string[]): string {
+export function genTmdHeader(tempo: number, tsLabel: string, chordDefs: string[], rhythmDefs?: string[]): string {
   return [
     '---',
     `tempo: ${tempo}`,
     `time_signature: ${tsLabel}`,
+    ...(rhythmDefs && rhythmDefs.length > 0 ? ['', ...rhythmDefs] : []),
     ...(chordDefs.length > 0 ? ['', ...chordDefs] : []),
     '---',
   ].join('\n');
 }
 
 /**
+ * 从节奏型 ID 列表生成 TMD 定义行
+ */
+export function genRhythmDefs(rhythmIds: string[], rhythmMap?: Map<string, RhythmPattern>): string[] {
+  if (!rhythmMap) return [];
+  const defs: string[] = [];
+  for (const id of rhythmIds) {
+    const r = rhythmMap.get(id);
+    if (r) defs.push(`@${r.id}: ${r.type}(${r.raw})`);
+  }
+  return defs;
+}
+
+/**
  * 生成单段落完整 TMD（header + [Section] + body）
  */
-export function genTmd(measures: TabMeasure[], opts?: { bpm?: number; tsLabel?: string; sectionName?: string }): string {
+export function genTmd(
+  measures: TabMeasure[],
+  opts?: { bpm?: number; tsLabel?: string; sectionName?: string; rhythmMap?: Map<string, RhythmPattern> },
+): string {
   const tempo = opts?.bpm ?? 72;
   const ts = opts?.tsLabel ?? '4/4';
 
-  const { body, usedChords } = genSectionBody(measures, opts?.sectionName);
+  const { body, usedChords, usedRhythmIds } = genSectionBody(measures, opts?.sectionName, ts);
   if (!body) return '';
 
   const chordDefs = genChordDefs(usedChords);
-  const header = genTmdHeader(tempo, ts, chordDefs);
+  const rhythmDefs = genRhythmDefs(usedRhythmIds, opts?.rhythmMap);
+  const header = genTmdHeader(tempo, ts, chordDefs, rhythmDefs);
   return `${header}\n\n${body}\n`;
+}
+
+/** 从拍号标签解析分子（如 "4/4" → 4, "3/4" → 3, "6/8" → 6） */
+function parseTsNumerator(tsLabel?: string): number {
+  if (!tsLabel) return 4;
+  const m = tsLabel.match(/^(\d+)\s*\//);
+  return m ? parseInt(m[1], 10) : 4;
 }
 
 export function splitRows(measures: TabMeasure[], cw: number): number[][] {

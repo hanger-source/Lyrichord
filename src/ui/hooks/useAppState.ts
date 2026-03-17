@@ -131,7 +131,7 @@ export function useAppState() {
       }
       try {
         const measures = JSON.parse(seg.measuresJson) as TabMeasure[];
-        const { body } = genSectionBody(measures, seg.name);
+        const { body } = genSectionBody(measures, seg.name, seg.tsLabel);
         return body || null;
       } catch { return null; }
     });

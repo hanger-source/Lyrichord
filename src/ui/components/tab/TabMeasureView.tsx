@@ -208,8 +208,35 @@ export function TabMeasureView({
             <div className="tab-barline" />
           </div>
         </div>
-        {/* 底部节奏型行 — 显示扫弦/拨弦方向 */}
+        {/* 底部节奏型行 — 显示扫弦/拨弦方向 + rhythmId 标签 */}
         <div className="tab-rhythm-drag-row">
+          {(() => {
+            // 按 rhythmId + rhythmSeq 切分区间
+            const labels: { rid: string; fromBi: number; toBi: number }[] = [];
+            let cur: { rid: string; seq: number | undefined; fromBi: number; toBi: number } | null = null;
+            for (let bi = 0; bi < m.beats.length; bi++) {
+              const rid = m.beats[bi].rhythmId;
+              const seq = m.beats[bi].rhythmSeq;
+              if (rid) {
+                if (cur && cur.rid === rid && cur.seq === seq && cur.toBi === bi) {
+                  cur.toBi = bi + 1;
+                } else {
+                  if (cur) labels.push({ rid: cur.rid, fromBi: cur.fromBi, toBi: cur.toBi });
+                  cur = { rid, seq, fromBi: bi, toBi: bi + 1 };
+                }
+              } else {
+                if (cur) { labels.push({ rid: cur.rid, fromBi: cur.fromBi, toBi: cur.toBi }); cur = null; }
+              }
+            }
+            if (cur) labels.push({ rid: cur.rid, fromBi: cur.fromBi, toBi: cur.toBi });
+            return labels.map((l, i) => (
+              <div key={`rid-${i}`} className="tab-rhythm-id-label"
+                title={`节奏型: @${l.rid}`}
+                style={{ left: beatX(m, l.fromBi), width: beatX(m, l.toBi) - beatX(m, l.fromBi) }}>
+                @{l.rid}
+              </div>
+            ));
+          })()}
           {m.beats.map((b, bi) => {
             const w = beatWidth(b);
             const sel = isRhythmSelected(bi);

@@ -44,12 +44,13 @@ export function validate(song: Song): ValidationResult {
       if (beat.chordId) usedChords.add(beat.chordId);
     }
 
-    // 校验小节拍数
+    // 校验小节拍数（token 数量应等于拍号拍数）
     const actual = bar.beats.reduce((s, b) => s + durationToBeats(b.duration), 0);
-    if (Math.abs(actual - ts.numerator) > 0.01) {
+    const expectedBeats = ts.numerator * (4 / ts.denominator);
+    if (Math.abs(actual - expectedBeats) > 0.01) {
       warnings.push({
         type: 'beat-count-mismatch',
-        message: `小节 ${i + 1}: 实际 ${actual} 拍，期望 ${ts.numerator} 拍`,
+        message: `小节 ${i + 1}: 实际 ${actual} 拍，期望 ${expectedBeats} 拍（${ts.numerator}/${ts.denominator} 拍号要求小节行有 ${ts.numerator} 个 token）`,
         target: String(i),
       });
     }

@@ -8,13 +8,14 @@ import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import { SegmentNav } from './SegmentNav';
 import { TabEditor } from './TabEditor';
 import type { ChordSelectionPending, TabMeasure, TabEditorHandle } from './TabEditor';
-import { genSectionBody, genChordDefs, genTmdHeader } from './TabEditor';
+import { genSectionBody, genChordDefs, genTmdHeader, genRhythmDefs } from './TabEditor';
 import {
   getSegmentsByProject, getOrphanSegments,
   saveSegment, deleteSegment,
   type SegmentRecord,
 } from '../../db/segment-repo';
 import type { RhythmPattern } from '../../core/types';
+import { getAllRhythms } from '../../db/rhythm-repo';
 
 export interface TabWorkspaceHandle {
   /** 外部触发保存（如 Ctrl+S） */
@@ -55,6 +56,17 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
   const saveMsgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const tabEditorRef = useRef<TabEditorHandle>(null);
 
+  // 节奏型库（传给 TabEditor 用于 TMD 生成）
+  const [rhythmMap, setRhythmMap] = useState<Map<string, RhythmPattern>>(new Map());
+  const refreshRhythmMap = useCallback(() => {
+    getAllRhythms().then(list => {
+      const m = new Map<string, RhythmPattern>();
+      for (const r of list) m.set(r.id, r);
+      setRhythmMap(m);
+    }).catch(console.error);
+  }, []);
+  useEffect(() => { refreshRhythmMap(); }, [refreshRhythmMap]);
+
   // 暴露 save 给外部（App 层 Ctrl+S）
   useImperativeHandle(ref, () => ({
     save() { tabEditorRef.current?.triggerSave(); },
@@ -63,8 +75,10 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
     },
     applyRhythm(rhythm: RhythmPattern) {
       tabEditorRef.current?.applyRhythm(rhythm);
+      // 确保 rhythmMap 包含刚应用的节奏型
+      refreshRhythmMap();
     },
-  }), []);
+  }), [refreshRhythmMap]);
 
   const [editorTempo, setEditorTempo] = useState(72);
   const [editorBpm, setEditorBpm] = useState(8);
@@ -186,14 +200,15 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
     if (!currentMeasuresRef.current) { onTmdChange?.(''); return; }
 
     const { measures, name } = currentMeasuresRef.current;
-    const { body, usedChords } = genSectionBody(measures, name || '新段落');
+    const { body, usedChords, usedRhythmIds } = genSectionBody(measures, name || '新段落', editorTsLabel);
     if (!body) { onTmdChange?.(''); return; }
 
     const chordDefs = genChordDefs(usedChords);
-    const header = genTmdHeader(editorTempo, editorTsLabel, chordDefs);
+    const rhythmDefs = genRhythmDefs(usedRhythmIds, rhythmMap);
+    const header = genTmdHeader(editorTempo, editorTsLabel, chordDefs, rhythmDefs);
     const tmd = `${header}\n\n${body}\n`;
     onTmdChange?.(tmd);
-  }, [editorTempo, editorTsLabel, onTmdChange]);
+  }, [editorTempo, editorTsLabel, onTmdChange, rhythmMap]);
 
   // 保持 ref 同步
   rebuildRef.current = rebuildFullTmd;
@@ -283,6 +298,7 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
           previewOpen={previewOpen}
           onTogglePreview={onTogglePreview}
           onRhythmSelectionStart={onRhythmSelectionStart}
+          rhythmMap={rhythmMap}
         />
       </div>
 
