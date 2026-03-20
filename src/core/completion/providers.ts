@@ -48,16 +48,16 @@ const headerRhythmDef: TmdCompletionProvider = {
     const from = ctx.pos - m[0].length;
     const options: Completion[] = [
       {
-        label: '@R1: pluck()',
+        label: '@id: pluck()',
         type: 'function',
         detail: '拨弦节奏型',
-        apply: applyWithCursor('@R1: pluck(', ')'),
+        apply: applyWithCursor('@id: pluck(', ')'),
       },
       {
-        label: '@R1: strum()',
+        label: '@id: strum()',
         type: 'function',
         detail: '扫弦节奏型',
-        apply: applyWithCursor('@R1: strum(', ')'),
+        apply: applyWithCursor('@id: strum(', ')'),
       },
     ];
     return { from, options, filter: true };

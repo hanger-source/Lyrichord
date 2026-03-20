@@ -8,13 +8,15 @@ import type { RhythmPattern, RhythmSlot, RhythmType } from '../core/types';
 import { getDb, persist } from './connection';
 
 function rowToPattern(row: Record<string, unknown>): RhythmPattern {
-  return {
+  const pattern = {
     id: row.id as string,
     type: row.type as RhythmType,
     raw: row.raw as string,
     slots: JSON.parse(row.slots_json as string) as RhythmSlot[],
     speed: (row.speed as number) ?? undefined,
   };
+  console.log('[rowToPattern]', pattern.id, 'type=', pattern.type, 'slotsKinds=', pattern.slots.map(s => s.kind));
+  return pattern;
 }
 
 function queryAll(db: Database, sql: string, params?: unknown[]): Record<string, unknown>[] {

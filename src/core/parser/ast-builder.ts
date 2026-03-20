@@ -476,9 +476,9 @@ function parseRhythmDef(
   line: string, lineNum: number,
   lib: Map<string, RhythmPattern>, warnings: BuildWarning[]
 ): void {
-  const m = line.match(/^@(\w+)\s*:\s*(pluck|strum)\s*\(\s*(.+)\s*\)\s*$/i);
+  const m = line.match(/^@([\w-]+)\s*:\s*(pluck|strum)\s*\(\s*(.+)\s*\)\s*$/i);
   if (!m) {
-    const simple = line.match(/^@(\w+)\s*:\s*(.+)/);
+    const simple = line.match(/^@([\w-]+)\s*:\s*(.+)/);
     if (simple) {
       const id = simple[1];
       const raw = simple[2].trim();

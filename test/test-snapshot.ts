@@ -50,21 +50,21 @@ function run(name: string, tmd: string, checks: (song: any, tex: string, bars: s
 }
 
 // ============================================================
-// 用例 1: 单区间 4 拍 — | C@R1 . D . |
-// C@R1 开始一个 4 拍区间，D 在区间内切换和弦（不带 @R1）
+// 用例 1: 单区间 4 拍 — | C@S8-vih8g . D . |
+// C@S8-vih8g 开始一个 4 拍区间，D 在区间内切换和弦（不带 @S8-vih8g）
 // ============================================================
-run('1: C@R1 . D . (单区间4拍)', `---
+run('1: C@S8-vih8g . D . (单区间4拍)', `---
 tempo: 72
 time_signature: 4/4
-@R1: strum(D-DU-DUU)
+@S8-vih8g: strum(D-DU-DUU)
 define [C]: { frets: "x 3 2 0 1 0" }
 define [D]: { frets: "x x 0 2 3 2" }
 ---
 [A1]
-| C@R1 . D . |
+| C@S8-vih8g . D . |
 `, (song, tex, bars, chs) => {
-  // bar 结构: C 2拍 rid=R1, D 2拍 rid=none（继承区间）
-  assert('bar结构', bars[0] === 'C(2,R1)+D(2,-)', bars[0]);
+  // bar 结构: C 2拍 rid=S8-vih8g, D 2拍 rid=none（继承区间）
+  assert('bar结构', bars[0] === 'C(2,S8-vih8g)+D(2,-)', bars[0]);
   // ch 标记: C 和 D 各一次
   assert('ch标记', chs.join(',') === 'C,D', chs.join(','));
   // 时值: 4拍区间 8slot → 八分音符基准 (.4 和 .8)
@@ -73,21 +73,21 @@ define [D]: { frets: "x x 0 2 3 2" }
 });
 
 // ============================================================
-// 用例 2: 两个独立区间 — | C@R1 . D@R1 . |
-// 两个 @R1 区间各 2 拍
+// 用例 2: 两个独立区间 — | C@S8-vih8g . D@S8-vih8g . |
+// 两个 @S8-vih8g 区间各 2 拍
 // ============================================================
-run('2: C@R1 . D@R1 . (两个2拍区间)', `---
+run('2: C@S8-vih8g . D@S8-vih8g . (两个2拍区间)', `---
 tempo: 72
 time_signature: 4/4
-@R1: strum(D-DU-DUU)
+@S8-vih8g: strum(D-DU-DUU)
 define [C]: { frets: "x 3 2 0 1 0" }
 define [D]: { frets: "x x 0 2 3 2" }
 ---
 [A1]
-| C@R1 . D@R1 . |
+| C@S8-vih8g . D@S8-vih8g . |
 `, (song, tex, bars, chs) => {
-  // bar 结构: C 2拍 rid=R1, D 2拍 rid=R1
-  assert('bar结构', bars[0] === 'C(2,R1)+D(2,R1)', bars[0]);
+  // bar 结构: C 2拍 rid=S8-vih8g, D 2拍 rid=S8-vih8g
+  assert('bar结构', bars[0] === 'C(2,S8-vih8g)+D(2,S8-vih8g)', bars[0]);
   // ch 标记: C 和 D 各一次
   assert('ch标记', chs.join(',') === 'C,D', chs.join(','));
   // 时值: 2拍区间 8slot → 十六分音符基准
@@ -95,22 +95,22 @@ define [D]: { frets: "x x 0 2 3 2" }
 });
 
 // ============================================================
-// 用例 3: 区间内和弦切换 — | G@R1 D A7@R1 . |
+// 用例 3: 区间内和弦切换 — | G@S8-vih8g D A7@S8-vih8g . |
 // 区间1: G+D 共 2 拍，区间2: A7 共 2 拍
 // ============================================================
-run('3: G@R1 D A7@R1 . (区间内切换)', `---
+run('3: G@S8-vih8g D A7@S8-vih8g . (区间内切换)', `---
 tempo: 72
 time_signature: 4/4
-@R1: strum(D-DU-DUU)
+@S8-vih8g: strum(D-DU-DUU)
 define [G]: { frets: "3 2 0 0 0 3" }
 define [D]: { frets: "x x 0 2 3 2" }
 define [A7]: { frets: "x 0 2 0 2 0" }
 ---
 [A1]
-| G@R1 D A7@R1 . |
+| G@S8-vih8g D A7@S8-vih8g . |
 `, (song, tex, bars, chs) => {
-  // bar 结构: G 1拍 rid=R1, D 1拍 rid=none, A7 2拍 rid=R1
-  assert('bar结构', bars[0] === 'G(1,R1)+D(1,-)+A7(2,R1)', bars[0]);
+  // bar 结构: G 1拍 rid=S8-vih8g, D 1拍 rid=none, A7 2拍 rid=S8-vih8g
+  assert('bar结构', bars[0] === 'G(1,S8-vih8g)+D(1,-)+A7(2,S8-vih8g)', bars[0]);
   // ch 标记: G → D → A7（三次切换）
   assert('ch标记', chs.join(',') === 'G,D,A7', chs.join(','));
   // 密度和用例2一致（2拍区间）
@@ -118,20 +118,20 @@ define [A7]: { frets: "x 0 2 0 2 0" }
 });
 
 // ============================================================
-// 用例 4: 不同节奏型 — | C@R1 . D@R2 . |
+// 用例 4: 不同节奏型 — | C@S8-vih8g . D@S8-1eifm . |
 // ============================================================
-run('4: C@R1 . D@R2 . (不同节奏型)', `---
+run('4: C@S8-vih8g . D@S8-1eifm . (不同节奏型)', `---
 tempo: 72
 time_signature: 4/4
-@R1: strum(D-DU-DUU)
-@R2: strum(DUDU-DUU)
+@S8-vih8g: strum(D-DU-DUU)
+@S8-1eifm: strum(DUDU-DUU)
 define [C]: { frets: "x 3 2 0 1 0" }
 define [D]: { frets: "x x 0 2 3 2" }
 ---
 [A1]
-| C@R1 . D@R2 . |
+| C@S8-vih8g . D@S8-1eifm . |
 `, (song, tex, bars, chs) => {
-  assert('bar结构', bars[0] === 'C(2,R1)+D(2,R2)', bars[0]);
+  assert('bar结构', bars[0] === 'C(2,S8-vih8g)+D(2,S8-1eifm)', bars[0]);
   assert('ch标记', chs.join(',') === 'C,D', chs.join(','));
 });
 
@@ -163,7 +163,7 @@ tex: [C]3.5.8 0.3.8 (0.1 1.2).8 0.3.8 [D]0.4.8 2.3.8 (2.1 3.2).8 2.3.8
 run('6: 完整B段(ch去重)', `---
 tempo: 72
 time_signature: 4/4
-@R1: strum(D-DU-DUU)
+@S8-vih8g: strum(D-DU-DUU)
 define [C]: { frets: "x 3 2 0 1 0" }
 define [D]: { frets: "x x 0 2 3 2" }
 define [G]: { frets: "3 2 0 0 0 3" }
@@ -171,17 +171,17 @@ define [A7]: { frets: "x 0 2 0 2 0" }
 define [Em]: { frets: "0 2 2 0 0 0" }
 ---
 [B段]
-| C@R1 . D@R1 . |
-| G@R1 . . . |
-| C@R1 . D@R1 . |
-| G@R1 . . . |
-| C@R1 . D@R1 . |
-| G@R1 D A7@R1 . |
-| C@R1 . D@R1 . |
-| Em@R1 . . . |
+| C@S8-vih8g . D@S8-vih8g . |
+| G@S8-vih8g . . . |
+| C@S8-vih8g . D@S8-vih8g . |
+| G@S8-vih8g . . . |
+| C@S8-vih8g . D@S8-vih8g . |
+| G@S8-vih8g D A7@S8-vih8g . |
+| C@S8-vih8g . D@S8-vih8g . |
+| Em@S8-vih8g . . . |
 `, (song, tex, bars, chs) => {
   // M6 结构
-  assert('M6结构', bars[5] === 'G(1,R1)+D(1,-)+A7(2,R1)', bars[5]);
+  assert('M6结构', bars[5] === 'G(1,S8-vih8g)+D(1,-)+A7(2,S8-vih8g)', bars[5]);
   // ch 标记序列: 每次和弦切换都有，同和弦连续不重复
   const expected = 'C,D,G,C,D,G,C,D,G,D,A7,C,D,Em';
   assert('ch序列', chs.join(',') === expected, chs.join(','));
@@ -209,18 +209,18 @@ tex: [C](0.1 1.2 0.3 2.4 3.5).8 {bd} r.8 (0.1 1.2 0.3 2.4 3.5).8 {bu} (0.1 0.2 0
 });
 
 // ============================================================
-// 用例 8: 单和弦整小节 — | G@R1 . . . |
+// 用例 8: 单和弦整小节 — | G@S8-vih8g . . . |
 // ============================================================
-run('8: G@R1 . . . (单和弦4拍)', `---
+run('8: G@S8-vih8g . . . (单和弦4拍)', `---
 tempo: 72
 time_signature: 4/4
-@R1: strum(D-DU-DUU)
+@S8-vih8g: strum(D-DU-DUU)
 define [G]: { frets: "3 2 0 0 0 3" }
 ---
 [A1]
-| G@R1 . . . |
+| G@S8-vih8g . . . |
 `, (song, tex, bars, chs) => {
-  assert('bar结构', bars[0] === 'G(4,R1)', bars[0]);
+  assert('bar结构', bars[0] === 'G(4,S8-vih8g)', bars[0]);
   assert('ch标记只有G', chs.join(',') === 'G', chs.join(','));
   // 4拍区间 → 八分音符基准
   assert('八分音符基准', tex.includes('.4') && tex.includes('.8'));

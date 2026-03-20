@@ -16,7 +16,7 @@ import type { Completion, CompletionResult } from '@codemirror/autocomplete';
 export interface CompletionData {
   /** DB 和弦库的所有和弦名 */
   chordNames: string[];
-  /** DB 节奏型库的所有 ID（如 R1, R2A） */
+  /** DB 节奏型库的所有 ID（如 S8-abc12, P8-6x7p3） */
   rhythmIds: string[];
   /** TAB 段落名列表 */
   segmentNames: string[];
