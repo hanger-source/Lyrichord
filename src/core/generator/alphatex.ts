@@ -297,6 +297,8 @@ function generateRegionWithRhythm(
 ): { tex: string; lastChordId: string | null } {
   const slotCount = rhythm.slots.length;
   const slotDur = regionTotalBeats / slotCount; // 每 slot 的拍数
+  const durVal = beatsToDuration(slotDur);
+  const durStr = durationToAlphaTex(durVal);
 
   // 构建 slot → 和弦映射
   interface ChordSpan {
@@ -330,70 +332,52 @@ function generateRegionWithRhythm(
     return spans.length > 0 ? spans[spans.length - 1] : null;
   }
 
-  // 合并 sustain，追踪和弦切换
-  interface MergedEvent {
-    slot: RhythmSlot;
-    slotSpan: number;
-    chordId: string | null;
-    frets: GuitarFrets | null;
-  }
-
-  const events: MergedEvent[] = [];
+  const parts: string[] = [];
+  let lastNotes: Note[] | null = null;
 
   for (let si = 0; si < slotCount; si++) {
     const slot = rhythm.slots[si];
     const span = chordAtSlot(si);
     const cid = span?.chordId ?? null;
-    const isSustain = slot.kind === 'strum' && slot.action === 'sustain';
-
-    const canMerge = isSustain && events.length > 0
-      && events[events.length - 1].chordId === cid;
-
-    if (canMerge) {
-      events[events.length - 1].slotSpan++;
-    } else {
-      events.push({
-        slot,
-        slotSpan: 1,
-        chordId: cid,
-        frets: span?.frets ?? inheritedFrets,
-      });
-    }
-  }
-
-  const parts: string[] = [];
-
-  for (const ev of events) {
-    const eventBeats = ev.slotSpan * slotDur;
-    const durVal = beatsToDuration(eventBeats);
-    const durStr = durationToAlphaTex(durVal);
+    const frets = span?.frets ?? inheritedFrets;
 
     const props: string[] = [];
-    // ch 标记只在和弦切换时输出
-    if (ev.chordId && ev.chordId !== prevChordId) {
-      props.push(`ch "${ev.chordId}"`);
+    if (cid && cid !== prevChordId) {
+      props.push(`ch "${cid}"`);
     }
-    if (ev.chordId) prevChordId = ev.chordId;
+    if (cid) prevChordId = cid;
 
-    const frets = ev.frets;
+    const isSustain = slot.kind === 'strum' && slot.action === 'sustain';
+
     if (!frets) {
       const propsStr = wrapProps(props);
       parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
       continue;
     }
 
-    const { notes, brush } = slotToNotes(ev.slot, frets);
-    if (notes.length === 0) {
+    if (isSustain && lastNotes && lastNotes.length > 0) {
+      // sustain → tied note: 同音符 + {t} tie + {lr} let-ring
+      const noteTex = notesToAlphaTex(lastNotes, '{t lr}');
       const propsStr = wrapProps(props);
-      parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
-    } else {
-      const noteTex = notesToAlphaTex(notes);
-      const allProps = brush
-        ? wrapProps([brush, ...props])
-        : wrapProps(props);
-      parts.push(allProps
-        ? `${noteTex}.${durStr} ${allProps}`
+      parts.push(propsStr
+        ? `${noteTex}.${durStr} ${propsStr}`
         : `${noteTex}.${durStr}`);
+    } else {
+      const { notes, brush } = slotToNotes(slot, frets);
+      if (notes.length === 0) {
+        const propsStr = wrapProps(props);
+        parts.push(propsStr ? `r.${durStr} ${propsStr}` : `r.${durStr}`);
+      } else {
+        const noteEffect = (slot.kind === 'strum' && slot.action !== 'mute') ? '{lr}' : undefined;
+        const noteTex = notesToAlphaTex(notes, noteEffect);
+        const allProps = brush
+          ? wrapProps([brush, ...props])
+          : wrapProps(props);
+        parts.push(allProps
+          ? `${noteTex}.${durStr} ${allProps}`
+          : `${noteTex}.${durStr}`);
+        lastNotes = notes;
+      }
     }
   }
 
@@ -497,12 +481,28 @@ function slotToNotes(
 
   if (slot.kind === 'strum') {
     if (slot.action === 'sustain') return { notes: [] };
-    // 部分弦扫弦：只取指定弦；省略 strings = 全弦
-    const targetNotes = slot.strings && slot.strings.length > 0
-      ? slot.strings
-          .map(s => { const idx = 6 - s; return idx >= 0 && idx < frets.length && frets[idx] >= 0 ? { string: s, fret: frets[idx] } as Note : null; })
-          .filter((n): n is Note => n !== null)
-      : getAllPlayable(frets);
+    // fromRoot：从和弦根音弦扫到1弦
+    // 部分弦：只取指定弦
+    // 省略 strings + 无 fromRoot = 全弦
+    let targetNotes: Note[];
+    if (slot.fromRoot) {
+      // 找根音弦号（最低有效弦）
+      const rootNote = findRootNote(frets);
+      targetNotes = [];
+      for (let s = rootNote.string; s >= 1; s--) {
+        const idx = 6 - s;
+        if (idx >= 0 && idx < frets.length && frets[idx] >= 0) {
+          targetNotes.push({ string: s, fret: frets[idx] });
+        }
+      }
+      if (targetNotes.length === 0) targetNotes = getAllPlayable(frets);
+    } else if (slot.strings && slot.strings.length > 0) {
+      targetNotes = slot.strings
+        .map(s => { const idx = 6 - s; return idx >= 0 && idx < frets.length && frets[idx] >= 0 ? { string: s, fret: frets[idx] } as Note : null; })
+        .filter((n): n is Note => n !== null);
+    } else {
+      targetNotes = getAllPlayable(frets);
+    }
     // brush duration (弦间延迟): 下扫 60ms, 上扫 50ms
     // 上扫比下扫快 10ms — 模拟真实手腕回弹 vs 重力顺势的速度差异
     // 调参历史: 默认→120ms(太慢)→40ms(太像拨)→60/50ms(当前)
