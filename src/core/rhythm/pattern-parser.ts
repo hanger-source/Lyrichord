@@ -59,13 +59,37 @@ export function parsePluckPattern(pattern: string): PluckSlot[] {
 export function parseStrumPattern(pattern: string): StrumSlot[] {
   const slots: StrumSlot[] = [];
   const s = pattern.replace(/[|\s]/g, '');
+  let i = 0;
 
-  for (const ch of s) {
-    switch (ch.toUpperCase()) {
-      case 'D': slots.push({ kind: 'strum', action: 'down' }); break;
-      case 'U': slots.push({ kind: 'strum', action: 'up' }); break;
-      case 'X': slots.push({ kind: 'strum', action: 'mute' }); break;
-      case '-': case '.': slots.push({ kind: 'strum', action: 'sustain' }); break;
+  while (i < s.length) {
+    const ch = s[i].toUpperCase();
+    let action: StrumSlot['action'] | null = null;
+    switch (ch) {
+      case 'D': action = 'down'; break;
+      case 'U': action = 'up'; break;
+      case 'X': action = 'mute'; break;
+      case '-': case '.': action = 'sustain'; break;
+    }
+    if (action) {
+      i++;
+      // 检查是否有弦范围 [123]
+      if (i < s.length && s[i] === '[') {
+        const close = s.indexOf(']', i);
+        if (close !== -1) {
+          const inner = s.slice(i + 1, close);
+          const strings = inner.split('').filter(c => c >= '1' && c <= '6').map(Number);
+          if (strings.length > 0 && strings.length < 6) {
+            slots.push({ kind: 'strum', action, strings });
+          } else {
+            slots.push({ kind: 'strum', action });
+          }
+          i = close + 1;
+          continue;
+        }
+      }
+      slots.push({ kind: 'strum', action });
+    } else {
+      i++;
     }
   }
   return slots;

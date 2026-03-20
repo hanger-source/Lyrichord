@@ -3,20 +3,20 @@
  *
  * 使用 Radix UI 组件: Tabs, Tooltip, ScrollArea
  */
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, memo, useCallback } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import {
   Music, Drum, RefreshCw, Trash2, BookOpen,
-  ChevronDown, ChevronRight, Search,
+  ChevronDown, ChevronRight, Search, Plus, X, Check, Pencil,
 } from 'lucide-react';
 import type { SidebarTab } from '../hooks/useAppState';
-import type { Song, ChordDefinition, RhythmPattern, RhythmSlot } from '../../core/types';
+import type { Song, ChordDefinition, RhythmPattern, RhythmSlot, RhythmType, PluckSlot, StrumSlot } from '../../core/types';
 import { renderChordDiagram } from '../chord-diagram';
 import { resolveChord } from '../../core/chord/resolver';
 import { getAllChordDefs, searchChordsInDB } from '../../core/chord/database';
 import { getChordsBySource } from '../../db/chord-repo';
-import { getAllRhythms } from '../../db/rhythm-repo';
+import { getAllRhythms, upsertRhythm, deleteRhythm } from '../../db/rhythm-repo';
 import {
   getAllScores, getScoreWithVersions, getLatestVersion,
   type ScoreRecord, type ScoreWithVersions,
@@ -40,9 +40,11 @@ interface SidebarProps {
   onChordPositionChange?: (chordName: string, positionIndex: number) => void;
   /** TAB 模式下，点击节奏型卡片 → 应用到段落 */
   onRhythmPick?: (rhythm: RhythmPattern) => void;
+  /** 新建/编辑节奏型后回调 → 刷新补全数据等 */
+  onRhythmChanged?: () => void;
 }
 
-export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear, onChordPositionChange, onRhythmPick }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear, onChordPositionChange, onRhythmPick, onRhythmChanged }: SidebarProps) {
   return (
     <Tooltip.Provider delayDuration={300}>
       <aside className="sidebar">
@@ -52,7 +54,7 @@ export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSele
         <div style={{ display: tab === 'rhythms' ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden' }}>
           <ScrollArea.Root className="sidebar-scroll-root">
             <ScrollArea.Viewport className="sidebar-scroll-viewport">
-              <RhythmPanel song={song} onRhythmPick={onRhythmPick} />
+              <RhythmPanel song={song} onRhythmPick={onRhythmPick} onRhythmChanged={onRhythmChanged} />
             </ScrollArea.Viewport>
             <ScrollArea.Scrollbar className="sidebar-scrollbar" orientation="vertical">
               <ScrollArea.Thumb className="sidebar-scrollbar-thumb" />
@@ -389,20 +391,53 @@ function ChordCardDef({ chord, onPick, highlight, highlightPositionIndex, onHigh
 //  节奏型面板
 // ============================================================
 
-const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick }: { song: Song | null; onRhythmPick?: (rhythm: RhythmPattern) => void }) {
+const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick, onRhythmChanged }: { song: Song | null; onRhythmPick?: (rhythm: RhythmPattern) => void; onRhythmChanged?: () => void }) {
   const [viewMode, setViewMode] = useState<'current' | 'library'>('current');
   const [dbRhythms, setDbRhythms] = useState<RhythmPattern[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null); // null = 不在编辑, '__new__' = 新建, 其他 = 编辑已有
 
   // 从 DB 加载全部节奏型
+  const loadDbRhythms = useCallback(async () => {
+    try { setDbRhythms(await getAllRhythms()); } catch (e) { console.error(e); }
+  }, []);
+
   useEffect(() => {
-    if (viewMode === 'library') {
-      getAllRhythms().then(setDbRhythms).catch(console.error);
-    }
-  }, [viewMode, song]);
+    if (viewMode === 'library') loadDbRhythms();
+  }, [viewMode, song, loadDbRhythms]);
 
   // 当前 = TMD 里定义的
   const currentRhythms = song ? Array.from(song.rhythmLibrary.values()) : [];
   const rhythms = viewMode === 'current' ? currentRhythms : dbRhythms;
+
+  // 收集所有已有 ID
+  function allIds(): Set<string> {
+    return new Set([
+      ...currentRhythms.map(r => r.id),
+      ...dbRhythms.map(r => r.id),
+    ]);
+  }
+
+  async function handleSave(pattern: RhythmPattern) {
+    try {
+      console.log('[RhythmPanel] handleSave:', { id: pattern.id, type: pattern.type, raw: pattern.raw, slotsKinds: pattern.slots.map(s => s.kind) });
+      await upsertRhythm(pattern, 'user');
+      await loadDbRhythms();
+      onRhythmChanged?.();
+      setEditingId(null);
+    } catch (e) {
+      console.error('保存节奏型失败:', e);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteRhythm(id);
+      await loadDbRhythms();
+      onRhythmChanged?.();
+    } catch (e) {
+      console.error('删除节奏型失败:', e);
+    }
+  }
 
   return (
     <div className="sidebar-panel">
@@ -419,14 +454,50 @@ const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick }: { song: So
           >全部</button>
         </div>
       </div>
-      {rhythms.length === 0 ? (
+
+      {/* 新建按钮 */}
+      {editingId === null && (
+        <button
+          className="rhythm-add-btn"
+          onClick={() => setEditingId('__new__')}
+        >
+          <Plus size={13} /> 新建节奏型
+        </button>
+      )}
+
+      {/* 新建编辑区 */}
+      {editingId === '__new__' && (
+        <RhythmEditor
+          onSave={handleSave}
+          onCancel={() => setEditingId(null)}
+          existingIds={allIds()}
+        />
+      )}
+
+      {rhythms.length === 0 && editingId === null ? (
         <p className="panel-empty">
           {viewMode === 'current' ? '当前曲目暂无节奏型' : '节奏型库为空'}
         </p>
       ) : (
         <div className="rhythm-list">
           {rhythms.map(r => (
-            <RhythmCard key={r.id} rhythm={r} onPick={onRhythmPick} />
+            editingId === r.id ? (
+              <RhythmEditor
+                key={r.id}
+                initial={r}
+                onSave={handleSave}
+                onCancel={() => setEditingId(null)}
+                existingIds={allIds()}
+              />
+            ) : (
+              <RhythmCard
+                key={r.id}
+                rhythm={r}
+                onPick={onRhythmPick}
+                onEdit={viewMode === 'library' ? () => setEditingId(r.id) : undefined}
+                onDelete={viewMode === 'library' ? () => handleDelete(r.id) : undefined}
+              />
+            )
           ))}
         </div>
       )}
@@ -434,7 +505,7 @@ const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick }: { song: So
   );
 });
 
-function RhythmCard({ rhythm, onPick }: { rhythm: RhythmPattern; onPick?: (rhythm: RhythmPattern) => void }) {
+function RhythmCard({ rhythm, onPick, onEdit, onDelete }: { rhythm: RhythmPattern; onPick?: (rhythm: RhythmPattern) => void; onEdit?: () => void; onDelete?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const slotsPerBeat = rhythm.slots.length >= 8 ? Math.ceil(rhythm.slots.length / 4) : Math.ceil(rhythm.slots.length / 2);
 
@@ -444,6 +515,16 @@ function RhythmCard({ rhythm, onPick }: { rhythm: RhythmPattern; onPick?: (rhyth
       <div className="rhythm-header">
         <span className="rhythm-id">@{rhythm.id}</span>
         <div className="rhythm-header-right">
+          {onEdit && (
+            <button className="btn-tiny" title="编辑" onClick={e => { e.stopPropagation(); onEdit(); }}>
+              <Pencil size={11} />
+            </button>
+          )}
+          {onDelete && (
+            <button className="btn-tiny btn-tiny--danger" title="删除" onClick={e => { e.stopPropagation(); onDelete(); }}>
+              <Trash2 size={11} />
+            </button>
+          )}
           <span className="rhythm-slot-count">{rhythm.slots.length} 拍位</span>
           <span className={`rhythm-badge rhythm-badge--${rhythm.type}`}>
             {rhythm.type === 'strum' ? '扫弦' : '拨弦'}
@@ -480,6 +561,338 @@ function RhythmCard({ rhythm, onPick }: { rhythm: RhythmPattern; onPick?: (rhyth
   );
 }
 
+// ---- 扫弦动作循环 ----
+const STRUM_CYCLE: StrumSlot['action'][] = ['down', 'up', 'mute', 'sustain'];
+
+/** 从 slots 反向生成 raw 字符串（给代码/DB 用） */
+function slotsToRaw(slots: RhythmSlot[]): string {
+  return slots.map(s => {
+    if (s.kind === 'strum') {
+      let ch: string;
+      switch (s.action) {
+        case 'down': ch = 'D'; break;
+        case 'up': ch = 'U'; break;
+        case 'mute': ch = 'X'; break;
+        case 'sustain': ch = '-'; break;
+      }
+      // 部分弦：D[123] 格式
+      if (s.strings && s.strings.length > 0 && s.strings.length < 6) {
+        return `${ch}[${s.strings.join('')}]`;
+      }
+      return ch;
+    }
+    // pluck
+    if (s.target === 'root') return 'p';
+    return s.strings.length === 1 ? String(s.strings[0]) : `(${s.strings.join('')})`;
+  }).join('-');
+}
+
+function makeDefaultSlots(type: RhythmType, count: number): RhythmSlot[] {
+  if (type === 'strum') {
+    return Array.from({ length: count }, (): StrumSlot => ({ kind: 'strum', action: 'down' }));
+  }
+  return Array.from({ length: count }, (): PluckSlot => ({ kind: 'pluck', target: 'root' }));
+}
+
+function cycleStrumSlot(slot: StrumSlot): StrumSlot {
+  const idx = STRUM_CYCLE.indexOf(slot.action);
+  const next = STRUM_CYCLE[(idx + 1) % STRUM_CYCLE.length];
+  return slot.strings ? { kind: 'strum', action: next, strings: slot.strings } : { kind: 'strum', action: next };
+}
+
+/** 拨弦 slot 的弦选择弹出面板 */
+function PluckSlotPicker({ slot, onChange, onClose }: {
+  slot: PluckSlot;
+  onChange: (s: PluckSlot) => void;
+  onClose: () => void;
+}) {
+  const isRoot = slot.target === 'root';
+  const selected = isRoot ? new Set<number | 'root'>(['root']) : new Set<number | 'root'>(slot.strings);
+
+  function toggle(target: number | 'root') {
+    const next = new Set(selected);
+    if (target === 'root') {
+      // 根音和弦号互斥
+      onChange({ kind: 'pluck', target: 'root' });
+      return;
+    }
+    // 选弦号时取消根音
+    next.delete('root');
+    if (next.has(target)) {
+      next.delete(target);
+    } else {
+      next.add(target);
+    }
+    // 如果全取消了，回到根音
+    const nums = [...next].filter((v): v is number => typeof v === 'number').sort();
+    if (nums.length === 0) {
+      onChange({ kind: 'pluck', target: 'root' });
+    } else {
+      onChange({ kind: 'pluck', target: 'strings', strings: nums });
+    }
+  }
+
+  // 点击外部关闭
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [onClose]);
+
+  return (
+    <div className="pluck-picker" ref={ref}>
+      <button
+        className={`pluck-picker-btn ${isRoot ? 'pluck-picker-btn--active' : ''}`}
+        onClick={() => toggle('root')}
+      >根</button>
+      {[6, 5, 4, 3, 2, 1].map(n => (
+        <button
+          key={n}
+          className={`pluck-picker-btn ${!isRoot && selected.has(n) ? 'pluck-picker-btn--active' : ''}`}
+          onClick={() => toggle(n)}
+        >{n}</button>
+      ))}
+    </div>
+  );
+}
+
+/** 扫弦弦范围选择面板 — 右键扫弦格子弹出 */
+function StrumStringPicker({ slot, onChange, onClose }: {
+  slot: StrumSlot;
+  onChange: (s: StrumSlot) => void;
+  onClose: () => void;
+}) {
+  const selected = new Set<number>(slot.strings ?? []);
+  const isAll = selected.size === 0; // 无 strings = 全弦
+
+  function toggle(n: number) {
+    const next = new Set(selected);
+    if (next.has(n)) next.delete(n); else next.add(n);
+    const nums = [...next].sort();
+    onChange(nums.length === 0 || nums.length === 6
+      ? { kind: 'strum', action: slot.action }
+      : { kind: 'strum', action: slot.action, strings: nums });
+  }
+
+  function setAll() {
+    onChange({ kind: 'strum', action: slot.action });
+  }
+
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [onClose]);
+
+  return (
+    <div className="pluck-picker" ref={ref}>
+      <button
+        className={`pluck-picker-btn ${isAll ? 'pluck-picker-btn--active' : ''}`}
+        onClick={setAll}
+      >全</button>
+      {[6, 5, 4, 3, 2, 1].map(n => (
+        <button
+          key={n}
+          className={`pluck-picker-btn ${!isAll && selected.has(n) ? 'pluck-picker-btn--active' : ''}`}
+          onClick={() => toggle(n)}
+        >{n}</button>
+      ))}
+    </div>
+  );
+}
+
+/** 从 slots 内容生成确定性短 ID */
+function deriveId(type: RhythmType, slots: RhythmSlot[], existingIds: Set<string>): string {
+  const prefix = type === 'strum' ? 'S' : 'P';
+  const raw = slotsToRaw(slots);
+  let h = 0;
+  for (let i = 0; i < raw.length; i++) {
+    h = ((h << 5) - h + raw.charCodeAt(i)) | 0;
+  }
+  const hash = (h >>> 0).toString(36).padStart(5, '0').slice(0, 5);
+  const base = `${prefix}${slots.length}-${hash}`;
+  if (!existingIds.has(base)) return base;
+  for (let i = 2; i <= 99; i++) {
+    const candidate = `${base}-${i}`;
+    if (!existingIds.has(candidate)) return candidate;
+  }
+  return base;
+}
+
+// ---- 节奏型编辑器（可视化交互） ----
+
+function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
+  initial?: RhythmPattern;
+  onSave: (pattern: RhythmPattern) => void;
+  onCancel: () => void;
+  existingIds: Set<string>;
+}) {
+  const [type, setType] = useState<RhythmType>(initial?.type ?? 'strum');
+  const [slots, setSlots] = useState<RhythmSlot[]>(
+    initial?.slots ?? makeDefaultSlots('strum', 4)
+  );
+  const [pickerIndex, setPickerIndex] = useState<number | null>(null);
+
+  // 实时预览 ID
+  const previewId = initial?.id ?? deriveId(type, slots, existingIds);
+
+  function handleTypeChange(newType: RhythmType) {
+    if (newType === type) return;
+    setType(newType);
+    setSlots(makeDefaultSlots(newType, slots.length));
+    setPickerIndex(null);
+  }
+
+  function handleSlotClick(index: number) {
+    if (type === 'strum') {
+      setSlots(prev => {
+        const next = [...prev];
+        next[index] = cycleStrumSlot(next[index] as StrumSlot);
+        return next;
+      });
+    } else {
+      // 拨弦：打开弦选择面板
+      setPickerIndex(pickerIndex === index ? null : index);
+    }
+  }
+
+  /** 右键扫弦格子 → 弹出弦范围选择 */
+  function handleSlotContextMenu(e: React.MouseEvent, index: number) {
+    if (type !== 'strum') return;
+    e.preventDefault();
+    setPickerIndex(pickerIndex === index ? null : index);
+  }
+
+  function handlePluckChange(index: number, newSlot: PluckSlot) {
+    setSlots(prev => {
+      const next = [...prev];
+      next[index] = newSlot;
+      return next;
+    });
+  }
+
+  function handleStrumStringChange(index: number, newSlot: StrumSlot) {
+    setSlots(prev => {
+      const next = [...prev];
+      next[index] = newSlot;
+      return next;
+    });
+  }
+
+  function addSlot() {
+    setSlots(prev => [
+      ...prev,
+      type === 'strum'
+        ? { kind: 'strum', action: 'down' } as StrumSlot
+        : { kind: 'pluck', target: 'root' } as PluckSlot,
+    ]);
+  }
+
+  function removeSlot() {
+    if (slots.length <= 2) return;
+    setPickerIndex(null);
+    setSlots(prev => prev.slice(0, -1));
+  }
+
+  function handleSave() {
+    const finalId = initial?.id ?? deriveId(type, slots, existingIds);
+    onSave({ id: finalId, type, raw: slotsToRaw(slots), slots });
+  }
+
+  const slotsPerBeat = slots.length >= 8 ? Math.ceil(slots.length / 4) : Math.ceil(slots.length / 2);
+
+  return (
+    <div className="rhythm-editor">
+      {/* 第一行: 自动ID + 类型 */}
+      <div className="rhythm-editor-row">
+        <span className="rhythm-id">@{previewId}</span>
+        <div className="rhythm-editor-type-toggle">
+          <button
+            className={`rhythm-type-btn ${type === 'strum' ? 'rhythm-type-btn--active rhythm-type-btn--strum' : ''}`}
+            onClick={() => handleTypeChange('strum')}
+          >扫弦</button>
+          <button
+            className={`rhythm-type-btn ${type === 'pluck' ? 'rhythm-type-btn--active rhythm-type-btn--pluck' : ''}`}
+            onClick={() => handleTypeChange('pluck')}
+          >拨弦</button>
+        </div>
+      </div>
+
+      {/* 拍位数量控制 */}
+      <div className="rhythm-editor-row">
+        <label className="rhythm-editor-label">拍位</label>
+        <div className="rhythm-slot-stepper">
+          <button className="stepper-btn" onClick={removeSlot} disabled={slots.length <= 2}>−</button>
+          <span className="stepper-value">{slots.length}</span>
+          <button className="stepper-btn" onClick={addSlot} disabled={slots.length >= 16}>+</button>
+        </div>
+        <span className="rhythm-editor-tip">
+          {type === 'strum' ? '左键切换动作 · 右键选弦' : '点击格子选择弦'}
+        </span>
+      </div>
+
+      {/* 可视化格子 */}
+      <div className="rhythm-visual rhythm-editor-grid">
+        {slots.map((slot, i) => {
+          const isBeatBoundary = i > 0 && i % slotsPerBeat === 0;
+          return (
+            <div key={i} className="rhythm-visual-group">
+              {isBeatBoundary && <div className="rhythm-beat-divider" />}
+              <div className="rhythm-slot-wrapper">
+                <div
+                  className={`rhythm-cell rhythm-cell--${slot.kind} ${getCellModifier(slot)} rhythm-cell--editable`}
+                  onClick={() => handleSlotClick(i)}
+                  onContextMenu={e => handleSlotContextMenu(e, i)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') handleSlotClick(i); }}
+                >
+                  <span className="rhythm-cell-icon">{getSlotIcon(slot)}</span>
+                  <span className="rhythm-cell-label">{getSlotLabel(slot)}</span>
+                </div>
+                {pickerIndex === i && slot.kind === 'pluck' && (
+                  <PluckSlotPicker
+                    slot={slot as PluckSlot}
+                    onChange={s => handlePluckChange(i, s)}
+                    onClose={() => setPickerIndex(null)}
+                  />
+                )}
+                {pickerIndex === i && slot.kind === 'strum' && (
+                  <StrumStringPicker
+                    slot={slot as StrumSlot}
+                    onChange={s => handleStrumStringChange(i, s)}
+                    onClose={() => setPickerIndex(null)}
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 操作按钮 */}
+      <div className="rhythm-editor-actions">
+        <button className="rhythm-editor-btn rhythm-editor-btn--cancel" onClick={onCancel}>
+          <X size={12} /> 取消
+        </button>
+        <button
+          className="rhythm-editor-btn rhythm-editor-btn--save"
+          onClick={handleSave}
+          disabled={slots.length === 0}
+        >
+          <Check size={12} /> 保存
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** 获取 slot 的可视化图标 */
 function getSlotIcon(slot: RhythmSlot): string {
   if (slot.kind === 'pluck') {
@@ -499,13 +912,18 @@ function getSlotLabel(slot: RhythmSlot): string {
   if (slot.kind === 'pluck') {
     return slot.target === 'root' ? '根' : slot.strings.join('');
   }
+  let label: string;
   switch (slot.action) {
-    case 'down': return '下';
-    case 'up': return '上';
-    case 'mute': return '闷';
-    case 'sustain': return '延';
-    default: return '?';
+    case 'down': label = '下'; break;
+    case 'up': label = '上'; break;
+    case 'mute': label = '闷'; break;
+    case 'sustain': label = '延'; break;
+    default: label = '?';
   }
+  if (slot.strings && slot.strings.length > 0 && slot.strings.length < 6) {
+    label += slot.strings.join('');
+  }
+  return label;
 }
 
 /** 获取 CSS modifier class */

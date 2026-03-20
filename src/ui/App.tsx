@@ -232,6 +232,7 @@ export function App() {
             onHighlightClear={handleHighlightClear}
             onChordPositionChange={editorMode === 'tab' ? handleChordPositionChange : undefined}
             onRhythmPick={handleRhythmPicked}
+            onRhythmChanged={state.refreshCompletionData}
           />
         </div>
       </div>

@@ -88,7 +88,7 @@ const tmdParser: StreamParser<TmdState> = {
 /** Header 区域 tokenizer */
 function tokenHeader(stream: any, _state: TmdState): string | null {
   // 节奏型定义: @R1: pluck(...)
-  if (stream.sol() && stream.match(/^@\w+/)) {
+  if (stream.sol() && stream.match(/^@[\w-]+/)) {
     return 'rhythmDef';
   }
   // define 关键字
@@ -160,7 +160,7 @@ function tokenBody(stream: any, state: TmdState): string | null {
   }
 
   // 段落行后面的节奏型引用 @R1
-  if (state.lineType === 'section' && stream.match(/^\s*@\w+/)) {
+  if (state.lineType === 'section' && stream.match(/^\s*@[\w-]+/)) {
     return 'atRef';
   }
 
@@ -171,7 +171,7 @@ function tokenBody(stream: any, state: TmdState): string | null {
   }
 
   // 通用 @ 引用（@R1, @R2A 等，或 @segment(...)）
-  if (stream.match(/^@\w+(?:\([^)]*\))?/)) {
+  if (stream.match(/^@[\w-]+(?:\([^)]*\))?/)) {
     return 'atRef';
   }
 
@@ -228,7 +228,7 @@ function tokenMeasureLine(stream: any): string | null {
   }
 
   // 小节行内的 @R1 节奏型引用
-  if (stream.match(/^@\w+/)) {
+  if (stream.match(/^@[\w-]+/)) {
     return 'atRef';
   }
 

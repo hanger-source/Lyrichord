@@ -128,6 +128,97 @@ export function DbToolsPanel() {
     }
   }, [checkStatus]);
 
+  const migrateRhythmIds = useCallback(async () => {
+    setLoading(true);
+    try {
+      const db = await getDb();
+      const mapping: Record<string, string> = {
+        'R1': 'P8-6x7p3',
+        'R1P': 'P8-19oa2',
+        'R2A': 'S16-1io7m',
+        'R2B': 'S16-159vr',
+      };
+      let migrated = 0;
+
+      // 1. rhythm_patterns 表
+      for (const [oldId, newId] of Object.entries(mapping)) {
+        const checkStmt = db.prepare('SELECT id FROM rhythm_patterns WHERE id = ?');
+        checkStmt.bind([oldId]);
+        const hasOld = checkStmt.step();
+        checkStmt.free();
+
+        if (hasOld) {
+          const newStmt = db.prepare('SELECT id FROM rhythm_patterns WHERE id = ?');
+          newStmt.bind([newId]);
+          const hasNew = newStmt.step();
+          newStmt.free();
+
+          if (hasNew) {
+            db.run('DELETE FROM rhythm_patterns WHERE id = ?', [oldId]);
+          } else {
+            db.run('UPDATE rhythm_patterns SET id = ? WHERE id = ?', [newId, oldId]);
+          }
+          db.run('UPDATE score_rhythms SET rhythm_id = ? WHERE rhythm_id = ?', [newId, oldId]);
+          migrated++;
+        }
+      }
+
+      // 2. score_versions.tmd_source — 替换 TMD 文本里的旧 ID 引用
+      let tmdFixed = 0;
+      const versions = queryAllRows(db, 'SELECT id, tmd_source FROM score_versions');
+      for (const v of versions) {
+        let src = v.tmd_source as string;
+        let changed = false;
+        for (const [oldId, newId] of Object.entries(mapping)) {
+          // 匹配 @R1、@R1P、@R2A、@R2B（定义行和引用）
+          const re = new RegExp(`@${oldId}\\b`, 'g');
+          if (re.test(src)) {
+            src = src.replace(re, `@${newId}`);
+            changed = true;
+          }
+        }
+        if (changed) {
+          db.run('UPDATE score_versions SET tmd_source = ? WHERE id = ?', [src, v.id as string]);
+          tmdFixed++;
+        }
+      }
+
+      // 3. tab_segments.measures_json — 替换段落数据里的旧 rhythmId
+      let segFixed = 0;
+      const segs = queryAllRows(db, 'SELECT id, measures_json FROM tab_segments');
+      for (const seg of segs) {
+        let json = seg.measures_json as string;
+        let changed = false;
+        for (const [oldId, newId] of Object.entries(mapping)) {
+          if (json.includes(`"${oldId}"`)) {
+            json = json.split(`"${oldId}"`).join(`"${newId}"`);
+            changed = true;
+          }
+        }
+        if (changed) {
+          db.run('UPDATE tab_segments SET measures_json = ? WHERE id = ?', [json, seg.id as string]);
+          segFixed++;
+        }
+      }
+
+      const total = migrated + tmdFixed + segFixed;
+      if (total > 0) {
+        await persist();
+        const parts: string[] = [];
+        if (migrated > 0) parts.push(`${migrated} 个节奏型记录`);
+        if (tmdFixed > 0) parts.push(`${tmdFixed} 个版本 TMD`);
+        if (segFixed > 0) parts.push(`${segFixed} 个段落`);
+        setLog(`迁移完成：${parts.join('、')} 已更新`);
+      } else {
+        setLog('无需迁移，没有旧节奏型 ID。');
+      }
+    } catch (e) {
+      setLog('迁移失败: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const exportSqlite = useCallback(async () => {
     setLoading(true);
     try {
@@ -229,6 +320,10 @@ export function DbToolsPanel() {
         <button className="btn-tiny" onClick={runSchemaMigrations} disabled={loading}
           style={{ padding: '4px 12px', fontSize: 13 }}>
           升级表结构
+        </button>
+        <button className="btn-tiny" onClick={migrateRhythmIds} disabled={loading}
+          style={{ padding: '4px 12px', fontSize: 13 }}>
+          迁移旧节奏型ID
         </button>
         <span style={{ width: 1, background: 'var(--border)', margin: '0 2px' }} />
         <button className="btn-tiny" onClick={exportSqlite} disabled={loading}

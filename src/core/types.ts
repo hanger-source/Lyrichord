@@ -289,7 +289,7 @@ export type RhythmType = 'pluck' | 'strum';
  * 系统自动将和弦 + 节奏型展开为具体音符序列。
  */
 export interface RhythmPattern {
-  /** 唯一标识 (如 "R1", "R2A") */
+  /** 唯一标识 (如 "S8-abc12", "P8-6x7p3") */
   id: string;
   /** 类型 */
   type: RhythmType;
@@ -312,11 +312,12 @@ export type PluckSlot =
   | { kind: 'pluck'; target: 'strings'; strings: number[] };
 
 /** 扫弦动作 */
-export type StrumSlot =
-  | { kind: 'strum'; action: 'down' }
-  | { kind: 'strum'; action: 'up' }
-  | { kind: 'strum'; action: 'mute' }     // 闷音/切音 (X)
-  | { kind: 'strum'; action: 'sustain' };  // 延音 (-)
+export type StrumSlot = {
+  kind: 'strum';
+  action: 'down' | 'up' | 'mute' | 'sustain';
+  /** 扫哪几根弦（1-6，1=高音e，6=低音E）。省略 = 全弦扫 */
+  strings?: number[];
+};
 
 // ================================================================
 //  §5  Beat — 拍 (核心音乐事件)

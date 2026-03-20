@@ -382,5 +382,6 @@ export function useAppState() {
     handleSave,
     handleDeleteScore,
     loadVersion,
+    refreshCompletionData,
   };
 }
