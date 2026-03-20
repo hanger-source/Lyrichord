@@ -72,6 +72,12 @@ export function parseStrumPattern(pattern: string): StrumSlot[] {
     }
     if (action) {
       i++;
+      // 检查 fromRoot 标记 *
+      if (i < s.length && s[i] === '*') {
+        slots.push({ kind: 'strum', action, fromRoot: true });
+        i++;
+        continue;
+      }
       // 检查是否有弦范围 [123]
       if (i < s.length && s[i] === '[') {
         const close = s.indexOf(']', i);
