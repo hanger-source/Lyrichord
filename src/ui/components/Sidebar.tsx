@@ -4,6 +4,7 @@
  * 使用 Radix UI 组件: Tabs, Tooltip, ScrollArea
  */
 import { useState, useEffect, useRef, memo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import * as ScrollArea from '@radix-ui/react-scroll-area';
 import {
@@ -40,8 +41,8 @@ interface SidebarProps {
   onChordPositionChange?: (chordName: string, positionIndex: number) => void;
   /** TAB 模式下，点击节奏型卡片 → 应用到段落 */
   onRhythmPick?: (rhythm: RhythmPattern) => void;
-  /** 新建/编辑节奏型后回调 → 刷新补全数据等 */
-  onRhythmChanged?: () => void;
+  /** 新建/编辑/删除节奏型后回调 → 刷新补全数据 + 同步 TMD */
+  onRhythmChanged?: (change?: { oldId?: string; pattern: RhythmPattern } | { deleted: string }) => void;
 }
 
 export const Sidebar = memo(function Sidebar({ tab, song, currentScoreId, onSelectScore, onDeleteScore, onLoadVersion, onChordPick, highlightChord, onHighlightClear, onChordPositionChange, onRhythmPick, onRhythmChanged }: SidebarProps) {
@@ -391,7 +392,7 @@ function ChordCardDef({ chord, onPick, highlight, highlightPositionIndex, onHigh
 //  节奏型面板
 // ============================================================
 
-const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick, onRhythmChanged }: { song: Song | null; onRhythmPick?: (rhythm: RhythmPattern) => void; onRhythmChanged?: () => void }) {
+const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick, onRhythmChanged }: { song: Song | null; onRhythmPick?: (rhythm: RhythmPattern) => void; onRhythmChanged?: SidebarProps['onRhythmChanged'] }) {
   const [viewMode, setViewMode] = useState<'current' | 'library'>('current');
   const [dbRhythms, setDbRhythms] = useState<RhythmPattern[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null); // null = 不在编辑, '__new__' = 新建, 其他 = 编辑已有
@@ -407,6 +408,14 @@ const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick, onRhythmChan
 
   // 当前 = TMD 里定义的
   const currentRhythms = song ? Array.from(song.rhythmLibrary.values()) : [];
+
+  // 当前面板为空时自动切到全部
+  useEffect(() => {
+    if (viewMode === 'current' && currentRhythms.length === 0) {
+      setViewMode('library');
+    }
+  }, [currentRhythms.length, viewMode]);
+
   const rhythms = viewMode === 'current' ? currentRhythms : dbRhythms;
 
   // 收集所有已有 ID
@@ -419,10 +428,14 @@ const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick, onRhythmChan
 
   async function handleSave(pattern: RhythmPattern) {
     try {
-      console.log('[RhythmPanel] handleSave:', { id: pattern.id, type: pattern.type, raw: pattern.raw, slotsKinds: pattern.slots.map(s => s.kind) });
+      const oldId = (pattern as any)._oldId as string | undefined;
+      // 如果 ID 变了（内容修改导致），先删旧记录
+      if (oldId) {
+        await deleteRhythm(oldId);
+      }
       await upsertRhythm(pattern, 'user');
       await loadDbRhythms();
-      onRhythmChanged?.();
+      onRhythmChanged?.({ oldId, pattern });
       setEditingId(null);
     } catch (e) {
       console.error('保存节奏型失败:', e);
@@ -433,7 +446,7 @@ const RhythmPanel = memo(function RhythmPanel({ song, onRhythmPick, onRhythmChan
     try {
       await deleteRhythm(id);
       await loadDbRhythms();
-      onRhythmChanged?.();
+      onRhythmChanged?.({ deleted: id });
     } catch (e) {
       console.error('删除节奏型失败:', e);
     }
@@ -575,6 +588,8 @@ function slotsToRaw(slots: RhythmSlot[]): string {
         case 'mute': ch = 'X'; break;
         case 'sustain': ch = '-'; break;
       }
+      // fromRoot：D* 格式（从根音弦开始扫）
+      if (s.fromRoot) return `${ch}*`;
       // 部分弦：D[123] 格式
       if (s.strings && s.strings.length > 0 && s.strings.length < 6) {
         return `${ch}[${s.strings.join('')}]`;
@@ -597,33 +612,46 @@ function makeDefaultSlots(type: RhythmType, count: number): RhythmSlot[] {
 function cycleStrumSlot(slot: StrumSlot): StrumSlot {
   const idx = STRUM_CYCLE.indexOf(slot.action);
   const next = STRUM_CYCLE[(idx + 1) % STRUM_CYCLE.length];
+  if (slot.fromRoot) return { kind: 'strum', action: next, fromRoot: true };
   return slot.strings ? { kind: 'strum', action: next, strings: slot.strings } : { kind: 'strum', action: next };
 }
 
+/** 计算 fixed 弹出面板的坐标 */
+/** 根据 anchor 元素计算 fixed 定位坐标，确保在视口内 */
+function calcPickerPos(anchor: HTMLElement, pickerW: number): { top: number; left: number } {
+  const r = anchor.getBoundingClientRect();
+  const pickerH = 34;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let top = r.top > pickerH + 8 ? r.top - pickerH - 4 : r.bottom + 4;
+  top = Math.max(8, Math.min(top, vh - pickerH - 8));
+  let left = Math.max(8, Math.min(r.left, vw - pickerW - 8));
+  return { top, left };
+}
+
 /** 拨弦 slot 的弦选择弹出面板 */
-function PluckSlotPicker({ slot, onChange, onClose }: {
+function PluckSlotPicker({ slot, onChange, onClose, pos }: {
   slot: PluckSlot;
   onChange: (s: PluckSlot) => void;
   onClose: () => void;
+  pos: { top: number; left: number };
 }) {
   const isRoot = slot.target === 'root';
   const selected = isRoot ? new Set<number | 'root'>(['root']) : new Set<number | 'root'>(slot.strings);
+  const ref = useRef<HTMLDivElement>(null);
 
   function toggle(target: number | 'root') {
     const next = new Set(selected);
     if (target === 'root') {
-      // 根音和弦号互斥
       onChange({ kind: 'pluck', target: 'root' });
       return;
     }
-    // 选弦号时取消根音
     next.delete('root');
     if (next.has(target)) {
       next.delete(target);
     } else {
       next.add(target);
     }
-    // 如果全取消了，回到根音
     const nums = [...next].filter((v): v is number => typeof v === 'number').sort();
     if (nums.length === 0) {
       onChange({ kind: 'pluck', target: 'root' });
@@ -632,18 +660,17 @@ function PluckSlotPicker({ slot, onChange, onClose }: {
     }
   }
 
-  // 点击外部关闭
-  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    // 用 setTimeout 延迟注册，避免打开面板的那次 mousedown 立即触发关闭
+    const timer = setTimeout(() => document.addEventListener('mousedown', handleClick), 0);
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handleClick); };
   }, [onClose]);
 
-  return (
-    <div className="pluck-picker" ref={ref}>
+  return createPortal(
+    <div className="pluck-picker" ref={ref} style={pos}>
       <button
         className={`pluck-picker-btn ${isRoot ? 'pluck-picker-btn--active' : ''}`}
         onClick={() => toggle('root')}
@@ -655,55 +682,93 @@ function PluckSlotPicker({ slot, onChange, onClose }: {
           onClick={() => toggle(n)}
         >{n}</button>
       ))}
-    </div>
+    </div>,
+    document.body
   );
 }
 
-/** 扫弦弦范围选择面板 — 右键扫弦格子弹出 */
-function StrumStringPicker({ slot, onChange, onClose }: {
+/** 扫弦弦范围选择面板 — 右键扫弦格子弹出，支持拖选 */
+function StrumStringPicker({ slot, onChange, onClose, pos }: {
   slot: StrumSlot;
   onChange: (s: StrumSlot) => void;
   onClose: () => void;
+  pos: { top: number; left: number };
 }) {
   const selected = new Set<number>(slot.strings ?? []);
-  const isAll = selected.size === 0; // 无 strings = 全弦
+  const isAll = selected.size === 0 && !slot.fromRoot;
+  const isFromRoot = !!slot.fromRoot;
+  const dragging = useRef(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  function applySelection(nums: number[]) {
+    onChange(nums.length === 0 || nums.length === 6
+      ? { kind: 'strum', action: slot.action }
+      : { kind: 'strum', action: slot.action, strings: nums });
+  }
 
   function toggle(n: number) {
     const next = new Set(selected);
     if (next.has(n)) next.delete(n); else next.add(n);
-    const nums = [...next].sort();
-    onChange(nums.length === 0 || nums.length === 6
-      ? { kind: 'strum', action: slot.action }
-      : { kind: 'strum', action: slot.action, strings: nums });
+    applySelection([...next].sort());
   }
 
   function setAll() {
     onChange({ kind: 'strum', action: slot.action });
   }
 
-  const ref = useRef<HTMLDivElement>(null);
+  function setFromRoot() {
+    onChange({ kind: 'strum', action: slot.action, fromRoot: true });
+  }
+
+  function handleDragStart(n: number, e: React.MouseEvent) {
+    e.preventDefault();
+    dragging.current = true;
+    applySelection([n]);
+  }
+
+  function handleDragEnter(n: number) {
+    if (!dragging.current) return;
+    const next = new Set(selected);
+    next.add(n);
+    applySelection([...next].sort());
+  }
+
+  useEffect(() => {
+    function handleUp() { dragging.current = false; }
+    document.addEventListener('mouseup', handleUp);
+    return () => document.removeEventListener('mouseup', handleUp);
+  }, []);
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    const timer = setTimeout(() => document.addEventListener('mousedown', handleClick), 0);
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handleClick); };
   }, [onClose]);
 
-  return (
-    <div className="pluck-picker" ref={ref}>
+  return createPortal(
+    <div className="pluck-picker" ref={ref} style={pos}>
       <button
         className={`pluck-picker-btn ${isAll ? 'pluck-picker-btn--active' : ''}`}
         onClick={setAll}
       >全</button>
+      <button
+        className={`pluck-picker-btn ${isFromRoot ? 'pluck-picker-btn--active' : ''}`}
+        onClick={setFromRoot}
+        title="从根音弦开始扫"
+      >根</button>
       {[6, 5, 4, 3, 2, 1].map(n => (
         <button
           key={n}
-          className={`pluck-picker-btn ${!isAll && selected.has(n) ? 'pluck-picker-btn--active' : ''}`}
+          className={`pluck-picker-btn ${!isAll && !isFromRoot && selected.has(n) ? 'pluck-picker-btn--active' : ''}`}
           onClick={() => toggle(n)}
+          onMouseDown={e => handleDragStart(n, e)}
+          onMouseEnter={() => handleDragEnter(n)}
         >{n}</button>
       ))}
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -738,9 +803,10 @@ function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
     initial?.slots ?? makeDefaultSlots('strum', 4)
   );
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
+  const [pickerPos, setPickerPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
-  // 实时预览 ID
-  const previewId = initial?.id ?? deriveId(type, slots, existingIds);
+  // 实时预览 ID — 始终根据内容计算
+  const previewId = deriveId(type, slots, existingIds);
 
   function handleTypeChange(newType: RhythmType) {
     if (newType === type) return;
@@ -749,7 +815,7 @@ function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
     setPickerIndex(null);
   }
 
-  function handleSlotClick(index: number) {
+  function handleSlotClick(index: number, e?: React.MouseEvent) {
     if (type === 'strum') {
       setSlots(prev => {
         const next = [...prev];
@@ -758,7 +824,15 @@ function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
       });
     } else {
       // 拨弦：打开弦选择面板
-      setPickerIndex(pickerIndex === index ? null : index);
+      if (pickerIndex === index) {
+        setPickerIndex(null);
+      } else {
+        if (e) {
+          const anchor = (e.currentTarget as HTMLElement).closest('.rhythm-slot-wrapper') as HTMLElement | null;
+          if (anchor) setPickerPos(calcPickerPos(anchor, 210));
+        }
+        setPickerIndex(index);
+      }
     }
   }
 
@@ -766,7 +840,14 @@ function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
   function handleSlotContextMenu(e: React.MouseEvent, index: number) {
     if (type !== 'strum') return;
     e.preventDefault();
-    setPickerIndex(pickerIndex === index ? null : index);
+    if (pickerIndex === index) {
+      setPickerIndex(null);
+    } else {
+      const anchor = (e.currentTarget as HTMLElement).closest('.rhythm-slot-wrapper') as HTMLElement | null;
+      const pos = anchor ? calcPickerPos(anchor, 260) : { top: 100, left: 100 };
+      setPickerPos(pos);
+      setPickerIndex(index);
+    }
   }
 
   function handlePluckChange(index: number, newSlot: PluckSlot) {
@@ -801,8 +882,10 @@ function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
   }
 
   function handleSave() {
-    const finalId = initial?.id ?? deriveId(type, slots, existingIds);
-    onSave({ id: finalId, type, raw: slotsToRaw(slots), slots });
+    // 始终根据内容重新生成 ID（确定性：同内容→同 ID）
+    const newId = deriveId(type, slots, existingIds);
+    const finalId = initial?.id && initial.id === newId ? initial.id : newId;
+    onSave({ id: finalId, type, raw: slotsToRaw(slots), slots, _oldId: initial?.id !== finalId ? initial?.id : undefined } as any);
   }
 
   const slotsPerBeat = slots.length >= 8 ? Math.ceil(slots.length / 4) : Math.ceil(slots.length / 2);
@@ -847,7 +930,7 @@ function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
               <div className="rhythm-slot-wrapper">
                 <div
                   className={`rhythm-cell rhythm-cell--${slot.kind} ${getCellModifier(slot)} rhythm-cell--editable`}
-                  onClick={() => handleSlotClick(i)}
+                  onClick={e => handleSlotClick(i, e)}
                   onContextMenu={e => handleSlotContextMenu(e, i)}
                   role="button"
                   tabIndex={0}
@@ -861,6 +944,7 @@ function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
                     slot={slot as PluckSlot}
                     onChange={s => handlePluckChange(i, s)}
                     onClose={() => setPickerIndex(null)}
+                    pos={pickerPos}
                   />
                 )}
                 {pickerIndex === i && slot.kind === 'strum' && (
@@ -868,6 +952,7 @@ function RhythmEditor({ initial, onSave, onCancel, existingIds }: {
                     slot={slot as StrumSlot}
                     onChange={s => handleStrumStringChange(i, s)}
                     onClose={() => setPickerIndex(null)}
+                    pos={pickerPos}
                   />
                 )}
               </div>
@@ -920,7 +1005,9 @@ function getSlotLabel(slot: RhythmSlot): string {
     case 'sustain': label = '延'; break;
     default: label = '?';
   }
-  if (slot.strings && slot.strings.length > 0 && slot.strings.length < 6) {
+  if (slot.fromRoot) {
+    label += '根';
+  } else if (slot.strings && slot.strings.length > 0 && slot.strings.length < 6) {
     label += slot.strings.join('');
   }
   return label;

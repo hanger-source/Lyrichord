@@ -24,6 +24,8 @@ export interface TabWorkspaceHandle {
   updateChordPosition: (chordName: string, positionIndex: number) => void;
   /** 应用节奏型到当前段落 */
   applyRhythm: (rhythm: RhythmPattern) => void;
+  /** 刷新节奏型库缓存（Sidebar 编辑节奏型后调用） */
+  refreshRhythms: () => void;
 }
 
 interface TabWorkspaceProps {
@@ -76,6 +78,9 @@ export const TabWorkspace = forwardRef<TabWorkspaceHandle, TabWorkspaceProps>(fu
     applyRhythm(rhythm: RhythmPattern) {
       tabEditorRef.current?.applyRhythm(rhythm);
       // 确保 rhythmMap 包含刚应用的节奏型
+      refreshRhythmMap();
+    },
+    refreshRhythms() {
       refreshRhythmMap();
     },
   }), [refreshRhythmMap]);

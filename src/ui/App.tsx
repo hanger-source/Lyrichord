@@ -19,6 +19,11 @@ import { applyTheme, lightColors, darkColors, layout } from './theme';
 import type { ColorTokens } from './theme';
 import { tmdToAlphaTex, type PipelineResult } from '../core/pipeline';
 
+/** 转义正则特殊字符 */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function App() {
   const state = useAppState();
   const [editorCollapsed, setEditorCollapsed] = useState(false);
@@ -99,6 +104,48 @@ export function App() {
   const handleChordPositionChange = useCallback((chordName: string, positionIndex: number) => {
     tabWorkspaceRef.current?.updateChordPosition(chordName, positionIndex);
   }, []);
+
+  // Sidebar 编辑/新建/删除节奏型 → 同步 TMD 文本 + 刷新补全
+  const handleRhythmChanged = useCallback((change?: { oldId?: string; pattern: RhythmPattern } | { deleted: string }) => {
+    state.refreshCompletionData();
+    // TAB 模式：刷新 TabWorkspace 的节奏型缓存，让 TMD 重新生成
+    tabWorkspaceRef.current?.refreshRhythms();
+    if (!change) return;
+
+    // 只在 TMD 模式下同步文本（TAB 模式不涉及 TMD 编辑器）
+    const tmd = state.tmdSource;
+    if (!tmd) return;
+
+    if ('deleted' in change) {
+      // 删除：移除 TMD 里的定义行（@id: ...）
+      const defRe = new RegExp(`^@${escapeRegex(change.deleted)}\\s*:.*$`, 'm');
+      const updated = tmd.replace(defRe, '').replace(/\n{3,}/g, '\n\n');
+      if (updated !== tmd) state.setTmdSource(updated);
+      return;
+    }
+
+    const { oldId, pattern } = change;
+    const newDef = `@${pattern.id}: ${pattern.type}(${pattern.raw})`;
+    let updated = tmd;
+
+    if (oldId && oldId !== pattern.id) {
+      // ID 变了：替换定义行 + 替换所有引用
+      const defRe = new RegExp(`^@${escapeRegex(oldId)}\\s*:.*$`, 'm');
+      updated = updated.replace(defRe, newDef);
+      // 替换和弦行里的 @oldId 引用（如 C@oldId → C@newId）
+      const refRe = new RegExp(`@${escapeRegex(oldId)}\\b`, 'g');
+      updated = updated.replace(refRe, `@${pattern.id}`);
+    } else {
+      // ID 没变：只更新定义行内容
+      const defRe = new RegExp(`^@${escapeRegex(pattern.id)}\\s*:.*$`, 'm');
+      if (defRe.test(updated)) {
+        updated = updated.replace(defRe, newDef);
+      }
+      // 如果 TMD 里没有这个定义（新建的），不自动插入 — 用户手动引用
+    }
+
+    if (updated !== tmd) state.setTmdSource(updated);
+  }, [state.tmdSource, state.setTmdSource, state.refreshCompletionData]);
 
   // Sidebar 节奏型库选中节奏型
   const handleRhythmPicked = useCallback((rhythm: RhythmPattern) => {
@@ -232,7 +279,7 @@ export function App() {
             onHighlightClear={handleHighlightClear}
             onChordPositionChange={editorMode === 'tab' ? handleChordPositionChange : undefined}
             onRhythmPick={handleRhythmPicked}
-            onRhythmChanged={state.refreshCompletionData}
+            onRhythmChanged={handleRhythmChanged}
           />
         </div>
       </div>

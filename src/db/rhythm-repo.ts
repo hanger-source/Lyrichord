@@ -15,7 +15,6 @@ function rowToPattern(row: Record<string, unknown>): RhythmPattern {
     slots: JSON.parse(row.slots_json as string) as RhythmSlot[],
     speed: (row.speed as number) ?? undefined,
   };
-  console.log('[rowToPattern]', pattern.id, 'type=', pattern.type, 'slotsKinds=', pattern.slots.map(s => s.kind));
   return pattern;
 }
 
