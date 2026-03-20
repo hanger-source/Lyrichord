@@ -23,7 +23,7 @@ import {
   STRING_NAMES, TIME_SIGS,
   emptyStrings, mkBeat, mkMeasure,
 } from './tab/tab-types';
-import type { TabMeasure, ChordSelectionPending } from './tab/tab-types';
+import type { TabMeasure, TabBeat, ChordSelectionPending } from './tab/tab-types';
 import { chordAt, genTmd, splitRows } from './tab/tab-tmd-gen';
 
 // ---- 模块级剪贴板（跨段落切换不丢失） ----
@@ -119,6 +119,7 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
 
       const { mi: targetMi, from: selFrom, to: selTo } = sel;
       const seq = ++rhythmSeqCounter.current;
+      const slotCount = rhythm.slots.length;
 
       setMeasures(prev => {
         const snap = JSON.stringify(prev);
@@ -130,10 +131,53 @@ export const TabEditor = forwardRef<TabEditorHandle, TabEditorProps>(function Ta
         return prev.map((m, mi) => {
           if (mi !== targetMi) return m;
           const next = structuredClone(m);
-          for (let i = selFrom; i <= selTo && i < next.beats.length; i++) {
-            next.beats[i].rhythmId = rhythm.id;
-            next.beats[i].rhythmSeq = seq;
+          const oldBeats = next.beats.splice(selFrom, selTo - selFrom + 1);
+          const totalWeight = oldBeats.reduce((s, b) => s + b.weight, 0);
+          const newWeight = totalWeight / slotCount;
+
+          // group 分配：收集选中区域内的 group 边界，按比例映射
+          // 简单方式：每个原始 beat 占 totalWeight 中的一份，
+          // 新 beat 按时间位置落入对应原始 beat 的 group
+          const groupMap: { cumWeight: number; group: number }[] = [];
+          let cum = 0;
+          for (const ob of oldBeats) {
+            groupMap.push({ cumWeight: cum, group: ob.group });
+            cum += ob.weight;
           }
+
+          const newBeats: TabBeat[] = [];
+          for (let i = 0; i < slotCount; i++) {
+            const pos = i * newWeight;
+            // 找到 pos 落入哪个原始 beat 的区间
+            let g = groupMap[0].group;
+            for (let j = groupMap.length - 1; j >= 0; j--) {
+              if (pos >= groupMap[j].cumWeight - 0.001) { g = groupMap[j].group; break; }
+            }
+            newBeats.push({
+              strings: emptyStrings(),
+              weight: newWeight,
+              group: g,
+              rhythmId: rhythm.id,
+              rhythmSeq: seq,
+            });
+          }
+
+          next.beats.splice(selFrom, 0, ...newBeats);
+
+          // 调整和弦区域的 fromBeat/toBeat 索引
+          const delta = slotCount - oldBeats.length;
+          for (const c of next.chords) {
+            if (c.fromBeat > selTo) {
+              c.fromBeat += delta;
+              c.toBeat += delta;
+            } else if (c.fromBeat >= selFrom) {
+              // 和弦在选中区域内：按比例缩放
+              const ratio = slotCount / oldBeats.length;
+              c.fromBeat = selFrom + Math.round((c.fromBeat - selFrom) * ratio);
+              c.toBeat = selFrom + Math.round((c.toBeat - selFrom) * ratio);
+            }
+          }
+
           return next;
         });
       });

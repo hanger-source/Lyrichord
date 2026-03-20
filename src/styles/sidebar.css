@@ -276,19 +276,22 @@
 /* 拨弦弦选择面板 */
 .rhythm-slot-wrapper { position: relative; }
 .pluck-picker {
-  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-  z-index: 10; margin-top: 4px;
+  position: fixed;
+  z-index: 1000;
   display: flex; gap: 2px; padding: 4px;
   background: var(--bg-elevated); border: 1px solid var(--cyan);
   border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
   white-space: nowrap;
+  user-select: none;
 }
+/* --above 不再需要，fixed 定位由 JS 计算 */
 .pluck-picker-btn {
   width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700;
   background: var(--bg-surface); color: var(--text-secondary);
   border: 1px solid var(--border); border-radius: 4px;
   cursor: pointer; transition: all var(--transition);
+  user-select: none;
 }
 .pluck-picker-btn:hover { border-color: var(--cyan); color: var(--text-primary); }
 .pluck-picker-btn--active { background: var(--cyan); color: #fff; border-color: var(--cyan); }
